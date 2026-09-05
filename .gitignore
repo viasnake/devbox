@@ -1,0 +1,7 @@
+.vagrant/
+*.log
+*.box
+/environments/*
+!/environments/main/
+/environments/main/*
+!/environments/main/Vagrantfile

@@ -1,0 +1,5 @@
+load File.expand_path("../../Vagrantfile", __dir__)
+
+Vagrant.configure("2") do |config|
+  config.vm.hostname = "devbox-main"
+end
