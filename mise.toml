@@ -7,6 +7,7 @@ run = [{ task = "setup-qemu" }, "uv sync --locked"]
 
 [tasks.setup-qemu]
 hide = true
+shell = "{% if os() == 'windows' %}powershell -NoProfile -Command{% else %}sh -e -c{% endif %}"
 run = '''
 if [ "$(uname -s)" != "Darwin" ]; then
     echo "QEMU setup supports Windows and macOS only." >&2
@@ -14,4 +15,10 @@ if [ "$(uname -s)" != "Darwin" ]; then
 fi
 HOMEBREW_NO_INSTALL_UPGRADE=1 brew install qemu
 '''
-run_windows = "winget install --id SoftwareFreedomConservancy.QEMU --exact --source winget --no-upgrade"
+run_windows = '''
+$ErrorActionPreference = 'Stop'
+winget install --id SoftwareFreedomConservancy.QEMU --exact --source winget --no-upgrade
+# WinGet reports an existing package as 0x8A150061, even with --no-upgrade.
+if ($LASTEXITCODE -eq -1978335135) { exit 0 }
+exit $LASTEXITCODE
+'''
