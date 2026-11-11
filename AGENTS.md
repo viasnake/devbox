@@ -1,36 +1,126 @@
 # Working on devbox
 
-Keep shared VM settings in the root `Vagrantfile` and environment overrides in `environments/<name>/Vagrantfile`. Use VirtualBox only. The box is `bento/ubuntu-26.04`; defaults are 8 GB RAM and 4 CPUs per VM.
+Devbox provides `up [name]`, `ssh [name]`, and `halt [name]` from the repository
+root through `mise run up`, `mise run ssh`, and `mise run halt`. The default
+environment is `main`. Tasks pass arguments through to `uv run --locked devbox.py`;
+keep lifecycle logic in Python and preserve interactive terminal access for SSH.
+Keep the implementation small, explicit, and shared across Windows x86-64/WHPX,
+Apple Silicon/HVF, and Intel Mac/HVF. Detect the physical CPU, including Rosetta.
+Do not add Linux hosts, Windows ARM, TCG fallback, or another VM backend.
 
-Keep this repository limited to VM lifecycle settings. Do not add provisioning, configuration management, wrappers, or compatibility code. Keep operational notes here, README brief, and all text in plain English. Do not add separate documentation.
+Keep the pinned uv in `mise.toml` aligned with CI. The one-time `mise run setup`
+uses Homebrew on macOS and WinGet on Windows for QEMU, then uv for the locked
+Python environment. Keep package installation out of up/ssh/halt and ordinary
+tests. Do not upgrade an existing QEMU during setup or automatically enable host
+virtualization features. Leave Git, mise, OpenSSH, and the host
+package manager as explicit prerequisites.
 
-## Environments
+Keep README focused on one-time prerequisites and daily use. Keep operational
+constraints here and all repository prose and comments in plain English.
+Do not add design-document trees, progress reports, or copies of implementation
+instructions. Use the existing commit-message style and a short-lived branch;
+submit through a draft PR. Do not push directly to main or merge without a request.
 
-`environments/main/` is the personal development environment, with hostname `devbox-main`. To add another, copy only its `Vagrantfile` into a new environment directory and change the hostname:
+## Boundaries
 
-```ruby
-load File.expand_path("../../Vagrantfile", __dir__)
+One environment owns one independent, persistent Ubuntu disk. Use JSON for
+settings, uv for the Python environment, pycdlib for NoCloud ISO creation, and
+OpenSSH for connections. Do not implement ISO, SSH, or QEMU protocols.
 
-Vagrant.configure("2") do |config|
-  config.vm.hostname = "devbox-sandbox"
-end
+Do not add Agent integration, provisioning hooks, language runtimes, Docker,
+application templates, shared folders, SSH agent forwarding, a host service,
+a supervisor, automatic startup/recovery, a GUI, snapshots, generic backend
+interfaces, or destructive lifecycle commands. Cloud-init is limited to the
+initial hostname, the dev user/key, SSH policy, and root filesystem expansion.
+
+Never modify existing VirtualBox registrations/disks, `.vagrant/`, untracked
+checkout files, or the user's SSH keys/config. Remove only tracked Vagrant files
+that the new implementation replaces. Only `environments/main/config.json` is
+tracked by default. Never commit local VM state, keys, seed files, logs, caches,
+or `.venv/`.
+
+## Data and lifecycle
+
+Keep runtime data outside the checkout in the documented OS-specific directory
+or an absolute `DEVBOX_HOME`. Preserve private Unix modes and Windows user ACLs.
+Use argument arrays without a shell. Check path syntax before creating files;
+escape QEMU option delimiters and quote OpenSSH configuration paths. Refuse
+symlink/junction storage rather than writing through it.
+
+Pin official Ubuntu image URLs to a dated build with SHA-256 from that build's
+[checksum manifest](https://cloud-images.ubuntu.com/releases/resolute/release-20261016/SHA256SUMS).
+Never combine a moving URL with a fixed checksum. Verify downloads and cached
+images before conversion. The machine disk must not depend on a backing cache.
+Only unpublished files made by the current initialization attempt may be cleaned
+up. Interrupted staging directories from a killed CLI are preserved for manual
+inspection; a later attempt uses a fresh staging directory.
+
+Never overwrite an existing disk, key, seed, instance ID, or writable UEFI vars.
+Publish first-boot artifacts together. If required artifacts are missing, stop
+and explain the incomplete state; do not reconstruct them around a used disk.
+A failed guest boot retains the same disk and identity on retry. Diagnose guest
+cloud-init failures using SSH and `/var/log/cloud-init*.log`; do not erase data
+or reset cloud-init to hide a failure.
+
+Serialize up/halt per environment with an OS file lock, released when the CLI
+exits. Preserve launch intent before spawning QEMU. Identify a process using its
+executable, full argument list (including UUID/disk), and saved PID/start time.
+Recover a process from the spawn/record gap only when its full identity matches.
+A stale or recycled PID must not authorize any signal. Ambiguous or inaccessible
+VM identity must fail closed. Do not create a persistent lock owner or supervisor.
+
+Use WHPX/HVF explicitly and the firmware shipped with the selected QEMU install.
+Keep writable ARM UEFI variables per environment and reuse them. Record the QEMU
+version, machine, and firmware for diagnosis. A QEMU binary hash change alone is
+not a reason to reject an existing VM; missing required features must produce an
+error without rebuilding. Review firmware compatibility when upgrading QEMU.
+
+All TCP forwards bind to 127.0.0.1. Report port conflicts without selecting a new
+port. Check actual QEMU startup errors as well as the initial port probe. Never
+report readiness based on spawn, an open port, or a fixed sleep. Authenticate SSH,
+verify the cloud-init instance ID, and require successful cloud-init completion
+within a bounded wait. Host keys use a dedicated known_hosts with accept-new;
+reject changed keys without deleting the record or disabling verification.
+
+Use saved launch connection settings while a VM is running, including when its
+JSON has changed. Apply CPU/RAM/port changes on the next stopped start. Initial
+hostname, disk size, image, platform, and architecture changes require another
+environment. Do not resize/rebuild implicitly. SSH/halt must still work if the
+checkout configuration was edited or removed.
+
+Halt requests `sudo -n poweroff` over SSH and confirms the matching QEMU exited.
+An SSH disconnect alone is not success. On failure or timeout leave the process
+and disk intact. Do not send a force kill, reset host networking, or change
+virtualization/security features automatically.
+
+## Validation
+
+Run the non-VM suite and whitespace checks:
+
+```sh
+uv run --locked python -m unittest discover -s tests -v
+uv run --locked python -m py_compile devbox.py tests/test_devbox.py
+git diff --check
 ```
 
-Use a unique `devbox-<name>` hostname: lowercase letters, digits, and hyphens; at most 63 characters; start and end with a letter or digit. Override resources here as needed. Shared changes affect every environment.
+Keep ordinary tests free of VM launches, package installs, host-setting changes,
+and paid services. Stub QEMU and network downloads; use temporary directories for
+file protection and process fixtures for PID reuse, duplicate starts, early exit,
+readiness failures, and clean-stop timeout. Exercise real ISO creation and
+OpenSSH config parsing without connecting. Windows/macOS CI runs these non-VM
+checks. CI is not evidence of successful hardware-accelerated VM acceptance.
 
-Only `environments/main/Vagrantfile` is tracked under `environments/`. Other environments and local files are ignored. Never copy, commit, or expose `.vagrant/`; it contains VM state and private keys.
+On Windows x86-64 and Apple Silicon, separately verify a fresh checkout's first
+up, SSH login, hostname/architecture/Ubuntu release, cloud-init success and rootfs
+size. In the guest, check `hostname`, `uname -m`, `cat /etc/os-release`,
+`cloud-init status --long`, `df -h /`, and external DNS/HTTPS access. Create a file,
+halt, up again, and check its contents. Check repeated up, a second environment
+with distinct ports, a port conflict, and halt on an already stopped environment.
+Close the calling terminal after up and use a new terminal for ssh/halt; only QEMU
+should remain. Check QEMU or SSH forwarding to a small guest web server and clear
+errors for missing QEMU/firmware. Intel Mac acceptance is separate.
 
-## Operations
-
-Run Vagrant inside the target environment, where a local `Vagrantfile` must exist. Do not start VMs from the repository root. Each environment manages one `default` machine; VirtualBox assigns its VM name.
-
-- Inspect: `vagrant status`, `vagrant ssh-config`, `vagrant port`.
-- Run guest commands: `vagrant ssh -c '<command>'`. Account for host shell quoting; do not assume extra users or tools exist.
-- Apply settings: `vagrant reload`. Changing the box requires recreating existing VMs to change their OS.
-- Delete: `vagrant destroy`, only when deletion of that VM is authorized. It erases guest data. Do not delete `.vagrant/` as a substitute.
-
-SSH maps localhost port 2222 to guest port 22, choosing another host port on conflict. Shared folders and SSH agent forwarding are disabled. Keep work in the guest. No guest firewall rules are added.
-
-## Checks
-
-Run `vagrant validate` in `environments/main/` and `git diff --check` at the root. When boot testing is in scope, run `vagrant up`, then `vagrant ssh -c 'hostname; cat /etc/os-release'` and `vagrant port`. Report checks that could not run.
+Record unavailable hardware/virtualization acceptance as **blocked** in the PR,
+with the host and checks that actually ran. Continue independent implementation
+and testing. Never present Linux tests, fixture results, or CI as Windows/macOS
+VM boot or terminal-detachment evidence.

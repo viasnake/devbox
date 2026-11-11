@@ -1,7 +1,10 @@
 .vagrant/
 *.log
 *.box
+.venv/
+__pycache__/
+.pytest_cache/
 /environments/*
 !/environments/main/
 /environments/main/*
-!/environments/main/Vagrantfile
+!/environments/main/config.json
