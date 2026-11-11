@@ -1,7 +1,7 @@
 [project]
 name = "devbox"
 version = "0.1.0"
-requires-python = "==3.13.18"
+requires-python = "==3.13.16"
 dependencies = ["psutil==7.2.2", "pycdlib==1.16.0"]
 
 [tool.uv]
