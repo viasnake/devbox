@@ -1,0 +1,8 @@
+{
+  "hostname": "devbox-main",
+  "cpus": 4,
+  "memory_mib": 8192,
+  "disk_gib": 80,
+  "ssh_port": 2222,
+  "forwards": []
+}
