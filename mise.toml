@@ -1,6 +1,22 @@
 [tools]
 uv = "0.13.1"
 
+[tasks.up]
+description = "Start a persistent Ubuntu VM and wait for SSH"
+raw_args = true
+run = "uv run --locked devbox.py up"
+
+[tasks.ssh]
+description = "Connect to an environment with OpenSSH"
+raw = true
+raw_args = true
+run = "uv run --locked devbox.py ssh"
+
+[tasks.halt]
+description = "Shut down an environment and wait for QEMU to exit"
+raw_args = true
+run = "uv run --locked devbox.py halt"
+
 [tasks.setup]
 description = "Install QEMU and prepare the locked Python environment"
 run = [{ task = "setup-qemu" }, "uv sync --locked"]

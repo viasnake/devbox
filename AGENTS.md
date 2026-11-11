@@ -1,7 +1,9 @@
 # Working on devbox
 
 Devbox provides `up [name]`, `ssh [name]`, and `halt [name]` from the repository
-root through `uv run --locked devbox.py`. The default environment is `main`.
+root through `mise run up`, `mise run ssh`, and `mise run halt`. The default
+environment is `main`. Tasks pass arguments through to `uv run --locked devbox.py`;
+keep lifecycle logic in Python and preserve interactive terminal access for SSH.
 Keep the implementation small, explicit, and shared across Windows x86-64/WHPX,
 Apple Silicon/HVF, and Intel Mac/HVF. Detect the physical CPU, including Rosetta.
 Do not add Linux hosts, Windows ARM, TCG fallback, or another VM backend.
@@ -10,7 +12,7 @@ Keep the pinned uv in `mise.toml` aligned with CI. The one-time `mise run setup`
 uses Homebrew on macOS and WinGet on Windows for QEMU, then uv for the locked
 Python environment. Keep package installation out of up/ssh/halt and ordinary
 tests. Do not upgrade an existing QEMU during setup or automatically enable host
-virtualization features. Leave Git, mise shell activation, OpenSSH, and the host
+virtualization features. Leave Git, mise, OpenSSH, and the host
 package manager as explicit prerequisites.
 
 Keep README focused on one-time prerequisites and daily use. Keep operational

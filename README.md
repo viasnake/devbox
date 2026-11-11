@@ -2,8 +2,7 @@
 
 Persistent Ubuntu 26.04 development VMs on Windows x86-64 (WHPX) and macOS (HVF).
 
-Install [mise](https://mise.jdx.dev/installing-mise.html) and enable its
-[shell activation](https://mise.jdx.dev/shell-setup.html), then prepare the host once:
+Install [mise](https://mise.jdx.dev/installing-mise.html), then prepare the host once:
 
 - **Windows x86-64:** install Git and OpenSSH Client, with WinGet on PATH.
   Enable **Windows Hypervisor Platform** in Windows Features and restart if
@@ -29,9 +28,9 @@ only uv, keeping QEMU and OpenSSH on PATH.
 Use the same three commands on both systems:
 
 ```sh
-uv run --locked devbox.py up
-uv run --locked devbox.py ssh
-uv run --locked devbox.py halt
+mise run up
+mise run ssh
+mise run halt
 ```
 
 The first `up` downloads and verifies a fixed official Ubuntu image, creates an
@@ -65,7 +64,7 @@ must listen on its guest network address (for example `0.0.0.0:8080`). For a gue
 application listening only on localhost, use OpenSSH forwarding instead:
 
 ```sh
-uv run --locked devbox.py ssh main -- -L 8080:localhost:8080
+mise run ssh main -- -L 8080:localhost:8080
 ```
 
 `up` prints the environment's `ssh-config` path. OpenSSH and editors can use that

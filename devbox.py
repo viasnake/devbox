@@ -908,7 +908,7 @@ def up(directory, home, name, config, profile):
 
 def show_connection(directory, name):
     print(
-        f"Ready. uv run --locked devbox.py ssh {name}\nSSH config: {directory / 'ssh-config'}\nData and logs: {directory}"
+        f"Ready. mise run ssh {name}\nSSH config: {directory / 'ssh-config'}\nData and logs: {directory}"
     )
 
 
@@ -947,17 +947,18 @@ def halt(directory, name, metadata, timeout=HALT_TIMEOUT):
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("up", "ssh", "halt"))
-    parser.add_argument("name", nargs="?", default="main", type=environment_name)
-    parser.add_argument(
-        "ssh_options",
-        nargs=argparse.REMAINDER,
-        help="ssh only: OpenSSH options after the environment name (e.g. main -- -L 8080:localhost:8080)",
-    )
-    args = parser.parse_args(argv)
-    if args.ssh_options and args.command != "ssh":
-        parser.error("Extra arguments are only supported for ssh.")
-    return args
+    parser.set_defaults(ssh_options=[])
+    commands = parser.add_subparsers(dest="command", required=True)
+    for command in ("up", "ssh", "halt"):
+        subcommand = commands.add_parser(command)
+        subcommand.add_argument("name", nargs="?", default="main", type=environment_name)
+        if command == "ssh":
+            subcommand.add_argument(
+                "ssh_options",
+                nargs=argparse.REMAINDER,
+                help="OpenSSH options after the environment name (e.g. main -- -L 8080:localhost:8080)",
+            )
+    return parser.parse_args(argv)
 
 
 def configure_output():
@@ -987,7 +988,7 @@ def main(argv=None):
                 return 0
             if not metadata or not find_process(metadata):
                 raise DevboxError(
-                    f"{args.name} is stopped. Run: uv run --locked devbox.py up {args.name}"
+                    f"{args.name} is stopped. Run: mise run up {args.name}"
                 )
             ssh_config(directory, metadata["launch"]["config"], args.name)
             options = args.ssh_options
