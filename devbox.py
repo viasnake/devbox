@@ -953,7 +953,15 @@ def parse_args(argv=None):
     return args
 
 
+def configure_output():
+    # Redirected Windows streams can otherwise reject Unicode storage paths.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
+
 def main(argv=None):
+    configure_output()
     try:
         args = parse_args(argv)
         profile = host()

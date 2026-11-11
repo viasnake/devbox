@@ -45,6 +45,7 @@ def result(code=0, out="", err=""):
 
 class Files(unittest.TestCase):
     def setUp(self):
+        d.configure_output()
         self.temp = tempfile.TemporaryDirectory(prefix="devbox 日本語 space,")
         self.addCleanup(self.temp.cleanup)
         self.home = Path(self.temp.name).resolve()
@@ -187,7 +188,9 @@ class Configuration(Files):
             patch.object(d, "preflight") as preflight,
         ):
             d.up(self.directory, self.home, "main", dict(CONFIG, ssh_port=4444), MAC)
-        self.assertIn("Port 2222", (self.directory / "ssh-config").read_text())
+        self.assertIn(
+            "Port 2222", (self.directory / "ssh-config").read_text(encoding="utf-8")
+        )
         launch.assert_not_called()
         preflight.assert_not_called()
         ready.assert_called_once()
@@ -696,7 +699,7 @@ class SSHReadiness(Files):
     def test_config_uses_only_private_key_hosts_and_quoted_paths(self):
         self.machine()
         d.ssh_config(self.directory, CONFIG, "main")
-        text = (self.directory / "ssh-config").read_text()
+        text = (self.directory / "ssh-config").read_text(encoding="utf-8")
         for setting in (
             "IdentityAgent none",
             "ForwardAgent no",
@@ -708,6 +711,16 @@ class SSHReadiness(Files):
         self.assertIn(f'IdentityFile "{(self.directory / "ssh_key").as_posix()}"', text)
         self.assertNotIn("StrictHostKeyChecking no", text)
         self.assertFalse((self.home / ".ssh").exists())
+
+    def test_unicode_connection_output_survives_a_legacy_windows_stream(self):
+        raw = io.BytesIO()
+        stream = io.TextIOWrapper(raw, encoding="cp1252")
+        with patch.object(d.sys, "stdout", stream):
+            d.configure_output()
+            d.show_connection(self.directory, "main")
+            stream.flush()
+            self.assertIn("日本語", raw.getvalue().decode("utf-8"))
+        stream.detach()
 
     def test_real_openssh_parses_generated_config_without_connecting(self):
         ssh = d.shutil.which("ssh")
