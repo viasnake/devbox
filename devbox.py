@@ -707,9 +707,16 @@ def find_process(metadata):
         except (psutil.NoSuchProcess, psutil.ZombieProcess):
             continue
         except psutil.AccessDenied as exc:
-            if saved and process.pid == saved["pid"]:
+            candidate = bool(saved and process.pid == saved["pid"])
+            try:
+                candidate = candidate or process.name().lower().startswith(
+                    "qemu-system-"
+                )
+            except (psutil.AccessDenied, psutil.NoSuchProcess):
+                pass
+            if candidate:
                 raise DevboxError(
-                    "Cannot identify the saved QEMU process; no action taken."
+                    "Cannot identify a QEMU process; inspect its permissions before retrying. No action taken."
                 ) from exc
             # Unrelated protected system processes are not VM candidates.
             continue

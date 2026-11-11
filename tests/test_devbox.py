@@ -555,6 +555,21 @@ class Processes(Files):
         ):
             d.find_process(self.metadata)
 
+    def test_unreadable_qemu_after_spawn_gap_blocks_a_second_launch(self):
+        self.prepared_launch()
+        self.metadata["process"] = None
+        process = self.process()
+        process.exe.side_effect = d.psutil.AccessDenied(123)
+        process.name.return_value = "qemu-system-aarch64"
+        with (
+            patch.object(d.psutil, "process_iter", return_value=[process]),
+            self.assertRaisesRegex(d.DevboxError, "Cannot identify"),
+        ):
+            d.find_process(self.metadata)
+        process.name.return_value = "unrelated-system-service"
+        with patch.object(d.psutil, "process_iter", return_value=[process]):
+            self.assertIsNone(d.find_process(self.metadata))
+
     def test_lock_contention_and_release(self):  # noqa: SIM117
         system = "Windows" if os.name == "nt" else "Darwin"
         with patch.object(d, "protect"):
