@@ -6,6 +6,13 @@ Keep the implementation small, explicit, and shared across Windows x86-64/WHPX,
 Apple Silicon/HVF, and Intel Mac/HVF. Detect the physical CPU, including Rosetta.
 Do not add Linux hosts, Windows ARM, TCG fallback, or another VM backend.
 
+Keep the pinned uv in `mise.toml` aligned with CI. The one-time `mise run setup`
+uses Homebrew on macOS and WinGet on Windows for QEMU, then uv for the locked
+Python environment. Keep package installation out of up/ssh/halt and ordinary
+tests. Do not upgrade an existing QEMU during setup or automatically enable host
+virtualization features. Leave Git, mise shell activation, OpenSSH, and the host
+package manager as explicit prerequisites.
+
 Keep README focused on one-time prerequisites and daily use. Keep operational
 constraints here and all repository prose and comments in plain English.
 Do not add design-document trees, progress reports, or copies of implementation

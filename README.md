@@ -2,22 +2,31 @@
 
 Persistent Ubuntu 26.04 development VMs on Windows x86-64 (WHPX) and macOS (HVF).
 
-Install these prerequisites once:
+Install [mise](https://mise.jdx.dev/installing-mise.html) and enable its
+[shell activation](https://mise.jdx.dev/shell-setup.html), then prepare the host once:
 
-- **Windows:** Git, [uv](https://docs.astral.sh/uv/getting-started/installation/),
-  [QEMU](https://www.qemu.org/download/#windows), and OpenSSH Client. With WinGet,
-  the verified QEMU and uv package IDs are `SoftwareFreedomConservancy.QEMU` and
-  `astral-sh.uv`. Add the QEMU installation directory (normally
-  `C:\Program Files\qemu`) to your user PATH. Enable **Windows Hypervisor Platform**
-  in Windows Features and restart if required; this one-time step may need an
-  administrator. Hardware virtualization must be enabled in firmware.
+- **Windows x86-64:** install Git and OpenSSH Client, with WinGet on PATH.
+  Enable **Windows Hypervisor Platform** in Windows Features and restart if
+  required. Hardware virtualization must be enabled in firmware.
 - **macOS:** install Git and OpenSSH through Apple's Command Line Tools
-  (`xcode-select --install`), then install [Homebrew](https://brew.sh/) and run
-  `brew install uv qemu`. Use a macOS version supported by QEMU.
+  (`xcode-select --install`), then install [Homebrew](https://brew.sh/).
+  Use a macOS version supported by QEMU.
 
-Reopen your terminal and check that `git`, `uv`, `ssh`, `ssh-keygen`, `qemu-img`,
-and `qemu-system-x86_64` (Windows/Intel Mac) or `qemu-system-aarch64` (Apple Silicon)
-are on PATH. Run the following from this repository's root as your normal user:
+From this repository's root, run:
+
+```sh
+mise run setup
+```
+
+This installs the pinned uv, installs QEMU through Homebrew or WinGet, and
+prepares the locked Python environment. It does not upgrade an existing QEMU.
+The Windows installer and one-time virtualization setup may need administrator
+approval; daily VM commands run as your normal user. On Windows, add the QEMU
+installation directory (normally `C:\Program Files\qemu`) to your user PATH and
+reopen the terminal. Existing installations can use `mise install` to install
+only uv, keeping QEMU and OpenSSH on PATH.
+
+Use the same three commands on both systems:
 
 ```sh
 uv run --locked devbox.py up

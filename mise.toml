@@ -1,0 +1,17 @@
+[tools]
+uv = "0.13.1"
+
+[tasks.setup]
+description = "Install QEMU and prepare the locked Python environment"
+run = [{ task = "setup-qemu" }, "uv sync --locked"]
+
+[tasks.setup-qemu]
+hide = true
+run = '''
+if [ "$(uname -s)" != "Darwin" ]; then
+    echo "QEMU setup supports Windows and macOS only." >&2
+    exit 1
+fi
+HOMEBREW_NO_INSTALL_UPGRADE=1 brew install qemu
+'''
+run_windows = "winget install --id SoftwareFreedomConservancy.QEMU --exact --source winget --no-upgrade"
