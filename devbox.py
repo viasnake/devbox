@@ -936,21 +936,21 @@ def halt(directory, name, metadata, timeout=HALT_TIMEOUT):
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.set_defaults(ssh_options=[])
     commands = parser.add_subparsers(dest="command", required=True)
     for command in ("up", "ssh", "halt"):
-        subcommand = commands.add_parser(command)
-        if command == "ssh":
-            subcommand.add_argument(
-                "ssh_options",
-                nargs=argparse.REMAINDER,
-                help="OpenSSH options after -- (e.g. -- -L 8081:localhost:8080)",
-            )
+        commands.add_parser(command)
+    if argv is None:
+        argv = sys.argv[1:]
+    ssh_options = []
+    if argv[:1] == ["ssh"] and argv[1:2] not in (["-h"], ["--help"]):
+        ssh_options = argv[1:]
+        if ssh_options[:1] == ["--"]:
+            ssh_options = ssh_options[1:]
+        if ssh_options and not ssh_options[0].startswith("-"):
+            parser.error("Only the main environment is supported")
+        argv = ["ssh"]
     args = parser.parse_args(argv)
-    if args.command == "ssh" and args.ssh_options and args.ssh_options[0] != "--":
-        parser.error(
-            "SSH options must follow --; only the main environment is supported"
-        )
+    args.ssh_options = ssh_options
     return args
 
 
@@ -982,13 +982,10 @@ def main(argv=None):
             if not metadata or not find_process(metadata):
                 raise DevboxError("main is stopped. Run: mise run up")
             ssh_config(directory, metadata["launch"]["config"], ENVIRONMENT)
-            options = args.ssh_options
-            if options[:1] == ["--"]:
-                options = options[1:]
             # OpenSSH options belong before the generated host alias.
             command = (
                 ssh_args(executable("ssh"), directory, ENVIRONMENT)
-                + options
+                + args.ssh_options
                 + [f"devbox-{ENVIRONMENT}"]
             )
         return subprocess.call(command)

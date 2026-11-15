@@ -124,7 +124,11 @@ class Configuration(Files):
             ):
                 d.parse_args([command, "sandbox"])
         args = d.parse_args(["ssh", "--", "-L", "8081:localhost:8081"])
-        self.assertEqual(args.ssh_options, ["--", "-L", "8081:localhost:8081"])
+        self.assertEqual(args.ssh_options, ["-L", "8081:localhost:8081"])
+        self.assertEqual(
+            d.parse_args(["ssh", "-L", "8081:localhost:8081"]).ssh_options,
+            args.ssh_options,
+        )
 
     def test_main_config_exposes_ssh_and_web_ports(self):
         config = d.validate_config(
