@@ -159,7 +159,7 @@ def host():
             "target": "x86_64",
             "accel": "whpx",
             "machine": "q35",
-            "cpu": "max",
+            "cpu": "qemu64",
         }
     if system == "Darwin":
         # hw.optional.arm64 reports the physical CPU even under Rosetta.
@@ -278,7 +278,12 @@ def executable(name):
 
 def firmware(qemu, arch):
     binary = Path(qemu).resolve().parent
-    directories = [binary / "share" / "qemu", binary.parent / "share" / "qemu", binary]
+    directories = [
+        binary / "share" / "qemu",
+        binary.parent / "share" / "qemu",
+        binary / "share",
+        binary,
+    ]
     names = (
         ("edk2-aarch64-code.fd", "edk2-aarch64-vars.fd")
         if arch == "arm64"

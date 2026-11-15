@@ -34,7 +34,7 @@ WINDOWS = {
     "target": "x86_64",
     "accel": "whpx",
     "machine": "q35",
-    "cpu": "max",
+    "cpu": "qemu64",
 }
 INTEL = dict(WINDOWS, system="Darwin", accel="hvf", cpu="host")
 
@@ -279,6 +279,14 @@ class Hosts(Files):
         self.assertEqual(len(d.firmware(str(binary), "arm64")), 2)
         with self.assertRaises(d.DevboxError):
             d.firmware(str(binary), "amd64")
+
+        windows_binary = self.home / "Windows" / "qemu-system-x86_64.exe"
+        windows_binary.parent.mkdir()
+        windows_data = windows_binary.parent / "share"
+        windows_data.mkdir()
+        windows_firmware = windows_data / "bios-256k.bin"
+        windows_firmware.write_bytes(b"firmware")
+        self.assertEqual(d.firmware(str(windows_binary), "amd64"), [str(windows_firmware)])
 
     def test_missing_tools_and_acceleration_fail_before_creation(self):
         with (
