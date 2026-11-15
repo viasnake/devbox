@@ -278,7 +278,12 @@ def executable(name):
 
 def firmware(qemu, arch):
     binary = Path(qemu).resolve().parent
-    directories = [binary / "share" / "qemu", binary.parent / "share" / "qemu", binary]
+    directories = [
+        binary / "share" / "qemu",
+        binary.parent / "share" / "qemu",
+        binary / "share",
+        binary,
+    ]
     names = (
         ("edk2-aarch64-code.fd", "edk2-aarch64-vars.fd")
         if arch == "arm64"
