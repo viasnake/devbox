@@ -10,7 +10,7 @@ run = "uv run --locked devbox.py up"
 description = "Connect to an environment with OpenSSH"
 raw = true
 raw_args = true
-run = "uv run --locked devbox.py ssh"
+run = "uv run --locked devbox.py ssh --"
 
 [tasks.halt]
 description = "Shut down an environment and wait for QEMU to exit"
