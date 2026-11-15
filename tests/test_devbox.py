@@ -34,7 +34,7 @@ WINDOWS = {
     "target": "x86_64",
     "accel": "whpx",
     "machine": "q35",
-    "cpu": "max",
+    "cpu": "qemu64",
 }
 INTEL = dict(WINDOWS, system="Darwin", accel="hvf", cpu="host")
 

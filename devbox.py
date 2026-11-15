@@ -159,7 +159,7 @@ def host():
             "target": "x86_64",
             "accel": "whpx",
             "machine": "q35",
-            "cpu": "max",
+            "cpu": "qemu64",
         }
     if system == "Darwin":
         # hw.optional.arm64 reports the physical CPU even under Rosetta.
