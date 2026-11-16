@@ -114,25 +114,59 @@ class Files(unittest.TestCase):
 
 
 class Configuration(Files):
-    def test_main_only_commands_and_ssh_options(self):
+    def test_environment_selection_and_ssh_options(self):
         for command in ("up", "ssh", "down", "status", "destroy"):
-            self.assertEqual(d.parse_args([command]).command, command)
-            with (
-                self.subTest(command=command),
-                redirect_stderr(io.StringIO()),
-                self.assertRaises(SystemExit),
-            ):
-                d.parse_args([command, "sandbox"])
-        args = d.parse_args(["ssh", "--", "-L", "8081:localhost:8081"])
-        self.assertEqual(args.ssh_options, ["-L", "8081:localhost:8081"])
-        self.assertEqual(
-            d.parse_args(["ssh", "-L", "8081:localhost:8081"]).ssh_options,
-            args.ssh_options,
-        )
+            args = d.parse_args([command])
+            self.assertEqual(args.command, command)
+            self.assertEqual(args.environment, "main")
+            for name in ("main", "dev", "test-2", "1", "a" * 56):
+                with self.subTest(command=command, name=name):
+                    self.assertEqual(d.parse_args([command, name]).environment, name)
+        for prefix, name in (([], "main"), (["dev"], "dev")):
+            for separator in ([], ["--"]):
+                args = d.parse_args(
+                    ["ssh", *prefix, *separator, "-L", "8081:localhost:8081"]
+                )
+                self.assertEqual(args.environment, name)
+                self.assertEqual(args.ssh_options, ["-L", "8081:localhost:8081"])
         self.assertFalse(d.parse_args(["destroy"]).yes)
-        self.assertTrue(d.parse_args(["destroy", "--yes"]).yes)
-        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            d.parse_args(["halt"])
+        for argv in (["--yes"], ["dev", "--yes"], ["--yes", "dev"]):
+            self.assertTrue(d.parse_args(["destroy", *argv]).yes)
+        for argv in (["halt"], ["up", "dev", "other"], ["ssh", "dev", "other"]):
+            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                d.parse_args(argv)
+
+    def test_environment_names_are_portable_and_cannot_escape_storage(self):
+        invalid = (
+            "", ".", "..", "../other", "..\\other", "dev/other", "dev\\other",
+            "C:dev", "C:\\dev", "/dev", "\\\\server\\dev", "Dev", "dev ",
+            "dev.", "dev_name", "dev*", "dev?", "dev%h", "dev\nother",
+            "dev-", "a" * 57, "con", "prn", "aux", "nul", "com1", "lpt9",
+        )
+        for name in invalid:
+            for command in ("up", "ssh", "down", "status", "destroy"):
+                with (
+                    self.subTest(command=command, name=name),
+                    patch.object(d, "host") as host,
+                    patch.object(d, "data_home", return_value=self.home),
+                    redirect_stderr(io.StringIO()),
+                    self.assertRaises(SystemExit),
+                ):
+                    d.main([command, name])
+                host.assert_not_called()
+
+    def test_help_works_for_default_and_named_environments(self):
+        for command in ("up", "ssh", "down", "status", "destroy"):
+            for prefix in ([], ["dev"]):
+                output = io.StringIO()
+                with (
+                    self.subTest(command=command, prefix=prefix),
+                    redirect_stdout(output),
+                    self.assertRaises(SystemExit) as caught,
+                ):
+                    d.parse_args([command, *prefix, "--help"])
+                self.assertEqual(caught.exception.code, 0)
+                self.assertIn("environment", output.getvalue())
 
     def test_main_config_exposes_ssh_and_web_ports(self):
         config = d.validate_config(
@@ -385,7 +419,7 @@ class Initialization(Files):
             Path(args[-1] + ".pub").write_text("ssh-ed25519 PUBLIC test")
         return result()
 
-    def initialize(self):
+    def initialize(self, name="main", config=None):
         base = self.home / "base.qcow2"
         base.write_bytes(b"image")
         with (
@@ -393,8 +427,41 @@ class Initialization(Files):
             patch.object(d, "run", side_effect=self.fake_tools),
         ):
             return d.initialize(
-                self.directory, self.home, "main", CONFIG, MAC, self.tools, self.image
+                self.directory.parent / name,
+                self.home,
+                name,
+                config or CONFIG,
+                MAC,
+                self.tools,
+                self.image,
             )
+
+    def test_two_environments_have_independent_disks_and_first_boot_artifacts(self):
+        main = self.initialize()
+        config = dict(CONFIG, hostname="devbox-dev", ssh_port=2223, forwards=[])
+        dev = self.initialize("dev", config)
+        other = self.directory.parent / "dev"
+        self.assertNotEqual(main["uuid"], dev["uuid"])
+        self.assertNotEqual(main["instance_id"], dev["instance_id"])
+        self.assertEqual(d.load_machine(other, "dev")["config"], config)
+        for filename in (
+            "disk.qcow2", "ssh_key", "known_hosts", "seed.iso", "uefi-vars.fd"
+        ):
+            with self.subTest(filename=filename):
+                self.assertFalse((self.directory / filename).samefile(other / filename))
+                before = (other / filename).read_bytes()
+                (self.directory / filename).write_bytes(b"changed main data")
+                self.assertEqual((other / filename).read_bytes(), before)
+        iso = d.pycdlib.PyCdlib()
+        iso.open(str(other / "seed.iso"))
+        try:
+            content = io.BytesIO()
+            iso.get_file_from_iso_fp(content, rr_path="/meta-data")
+            metadata = json.loads(content.getvalue())
+        finally:
+            iso.close()
+        self.assertEqual(metadata["instance-id"], dev["instance_id"])
+        self.assertEqual(metadata["local-hostname"], "devbox-dev")
 
     def test_real_iso_contains_minimal_public_data(self):
         metadata = self.initialize()
@@ -612,6 +679,17 @@ class Processes(Files):
             with d.machine_lock(self.home, "main", system):
                 pass
 
+    def test_environment_locks_are_independent(self):
+        system = "Windows" if os.name == "nt" else "Darwin"
+        with patch.object(d, "protect"):
+            with d.machine_lock(self.home, "main", system) as main:
+                with d.machine_lock(self.home, "dev", system) as dev:
+                    self.assertEqual(main, self.directory)
+                    self.assertEqual(dev, self.directory.parent / "dev")
+                    with self.assertRaisesRegex(d.DevboxError, "changing dev"):
+                        with d.machine_lock(self.home, "dev", system):
+                            pass
+
     def test_launch_intent_is_saved_before_spawn_and_parent_uses_no_pipe(self):
         self.machine()
 
@@ -694,6 +772,145 @@ class Lifecycle(Files):
             for path in self.directory.rglob("*")
             if path.is_file()
         }
+
+    def other_launch(self):
+        directory = self.directory.parent / "dev"
+        metadata = copy.deepcopy(self.metadata)
+        metadata.update(
+            name="dev",
+            uuid=str(uuid.uuid4()),
+            instance_id=str(uuid.uuid4()),
+            config=dict(CONFIG, hostname="devbox-dev", ssh_port=2223, forwards=[]),
+            process={"pid": 456, "created": 43.0},
+        )
+        directory.mkdir()
+        (directory / "logs").mkdir()
+        for filename in (
+            "disk.qcow2", "seed.iso", "ssh_key", "ssh_key.pub",
+            "known_hosts", "uefi-vars.fd",
+        ):
+            (directory / filename).write_bytes(b"dev fixture")
+        metadata["launch"] = {
+            "argv": d.qemu_args(directory, metadata, metadata["config"], self.tools),
+            "config": copy.deepcopy(metadata["config"]),
+        }
+        d.atomic_json(directory / "machine.json", metadata)
+        process = self.process(pid=456, created=43.0, argv=metadata["launch"]["argv"])
+        return directory, metadata, process
+
+    def test_up_reads_only_selected_configuration(self):
+        self.saved_launch()
+        before = self.contents()
+        root = self.home / "missing-checkout"
+        config = dict(CONFIG, hostname="devbox-dev", ssh_port=2223, forwards=[])
+        path = root / "environments" / "dev" / "config.json"
+        path.parent.mkdir(parents=True)
+        d.atomic_json(path, config)
+        with patch.object(d, "up") as up:
+            code, output, error = self.invoke(["up", "dev"])
+        self.assertEqual((code, error), (0, ""))
+        up.assert_called_once_with(
+            self.directory.parent / "dev",
+            self.home,
+            "dev",
+            config,
+            WINDOWS if os.name == "nt" else MAC,
+        )
+        self.assertEqual(self.contents(), before)
+        with patch.object(d, "up") as up:
+            code, output, error = self.invoke(["up", "missing"])
+        self.assertEqual(code, 1)
+        self.assertIn("environments", error)
+        self.assertIn("missing", error)
+        up.assert_not_called()
+        self.assertFalse((self.directory.parent / "missing").exists())
+
+    def test_status_distinguishes_two_running_environments_without_configs(self):
+        self.saved_launch()
+        directory, metadata, dev = self.other_launch()
+        before = self.contents()
+        with patch.object(d.psutil, "process_iter", return_value=[self.process(), dev]):
+            for name, pid, port in (("main", 123, 2222), ("dev", 456, 2223)):
+                code, output, error = self.invoke(["status", name])
+                self.assertEqual((code, error), (0, ""))
+                self.assertIn(f"{name}: running (QEMU PID {pid})", output)
+                self.assertIn(f"SSH: dev@127.0.0.1:{port}", output)
+        self.assertEqual(self.contents(), before)
+
+    def test_named_ssh_uses_saved_connection_and_preserves_interactive_options(self):
+        self.saved_launch()
+        directory, metadata, dev = self.other_launch()
+        before = self.contents()
+        with (
+            patch.object(d.psutil, "process_iter", return_value=[self.process(), dev]),
+            patch.object(d, "executable", return_value="ssh"),
+            patch.object(d.subprocess, "call", return_value=7) as call,
+        ):
+            code, output, error = self.invoke(
+                ["ssh", "dev", "--", "-L", "8082:localhost:8080"]
+            )
+        self.assertEqual((code, error), (7, ""))
+        call.assert_called_once_with(
+            ["ssh", "-F", str(directory / "ssh-config"),
+             "-L", "8082:localhost:8080", "devbox-dev"]
+        )
+        config = (directory / "ssh-config").read_text(encoding="utf-8")
+        self.assertIn("Port 2223", config)
+        self.assertIn("Host devbox-dev", config)
+        self.assertIn((directory / "ssh_key").as_posix(), config)
+        self.assertEqual(self.contents(), before)
+
+    def test_named_down_stops_only_selected_process_without_configs(self):
+        self.saved_launch()
+        directory, metadata, dev = self.other_launch()
+        main = self.process()
+        before = self.contents()
+        with (
+            patch.object(d.psutil, "process_iter", side_effect=[[main, dev], [main]]),
+            patch.object(d, "executable", return_value="ssh"),
+            patch.object(d, "run", return_value=result(255)) as run,
+        ):
+            code, output, error = self.invoke(["down", "dev"])
+        self.assertEqual((code, error), (0, ""))
+        self.assertIn("dev stopped; its QEMU process has exited", output)
+        self.assertEqual(run.call_args.args[0][-2:], ["devbox-dev", "sudo -n poweroff"])
+        self.assertIsNone(d.read_json(directory / "machine.json")["process"])
+        self.assertEqual(self.contents(), before)
+        main.kill.assert_not_called()
+        main.terminate.assert_not_called()
+
+    def test_named_destroy_confirms_target_and_preserves_other_running_environment(self):
+        self.saved_launch()
+        directory, metadata, dev = self.other_launch()
+        main = self.process()
+        before = self.contents()
+        with patch.object(d, "down") as down:
+            code, output, error = self.invoke(["destroy", "dev"])
+        self.assertEqual(code, 1)
+        self.assertIn("mise run destroy dev --yes", error)
+        down.assert_not_called()
+        self.assertTrue((directory / "disk.qcow2").is_file())
+        with (
+            patch.object(
+                d.psutil, "process_iter", side_effect=[[main, dev], [main], [main]]
+            ),
+            patch.object(d, "executable", return_value="ssh"),
+            patch.object(d, "run", return_value=result()) as run,
+        ):
+            code, output, error = self.invoke(["destroy", "dev", "--yes"])
+        self.assertEqual((code, error), (0, ""))
+        self.assertIn("dev destroyed", output)
+        self.assertFalse(directory.exists())
+        self.assertEqual(run.call_args.args[0][-2:], ["devbox-dev", "sudo -n poweroff"])
+        self.assertEqual(self.contents(), before)
+        self.assertTrue((directory.parent / ".dev.lock").is_file())
+        main.kill.assert_not_called()
+        main.terminate.assert_not_called()
+        with patch.object(d, "run") as run:
+            code, output, error = self.invoke(["destroy", "dev", "--yes"])
+        self.assertEqual((code, error), (0, ""))
+        self.assertIn("nothing to destroy", output)
+        run.assert_not_called()
 
     def test_absent_status_down_and_destroy_succeed_without_tools(self):
         with patch.object(d, "executable") as executable, patch.object(d, "run") as run:
@@ -1022,31 +1239,32 @@ class SSHReadiness(Files):
         if not ssh:
             self.skipTest("OpenSSH client is unavailable")
         self.machine()
-        d.ssh_config(self.directory, CONFIG, "main")
-        for batch, options, forwarding in (
-            (False, [], "yes"),
-            (False, ["-a"], "no"),
-            (True, [], "no"),
-        ):
-            with self.subTest(batch=batch, options=options):
-                output = d.run(
-                    d.ssh_args(ssh, self.directory, "main", batch=batch)
-                    + ["-G", *options, "devbox-main"]
-                ).stdout
-                self.assertIn("port 2222", output)
-                self.assertIn("user dev", output)
-                self.assertIn("日本語", output)
-                self.assertIn(f"forwardagent {forwarding}\n", output)
-                self.assertIn("identitiesonly yes\n", output)
-                self.assertIn(
-                    f"identityfile {(self.directory / 'ssh_key').as_posix()}\n",
-                    output,
-                )
-                if batch:
-                    self.assertIn("identityagent none\n", output)
-                    self.assertIn("batchmode yes\n", output)
-                else:
-                    self.assertNotIn("identityagent none\n", output)
+        for name, config in (("main", CONFIG), ("dev", dict(CONFIG, ssh_port=2223))):
+            d.ssh_config(self.directory, config, name)
+            for batch, options, forwarding in (
+                (False, [], "yes"),
+                (False, ["-a"], "no"),
+                (True, [], "no"),
+            ):
+                with self.subTest(name=name, batch=batch, options=options):
+                    output = d.run(
+                        d.ssh_args(ssh, self.directory, name, batch=batch)
+                        + ["-G", *options, f"devbox-{name}"]
+                    ).stdout
+                    self.assertIn(f"port {config['ssh_port']}", output)
+                    self.assertIn("user dev", output)
+                    self.assertIn("日本語", output)
+                    self.assertIn(f"forwardagent {forwarding}\n", output)
+                    self.assertIn("identitiesonly yes\n", output)
+                    self.assertIn(
+                        f"identityfile {(self.directory / 'ssh_key').as_posix()}\n",
+                        output,
+                    )
+                    if batch:
+                        self.assertIn("identityagent none\n", output)
+                        self.assertIn("batchmode yes\n", output)
+                    else:
+                        self.assertNotIn("identityagent none\n", output)
 
 
 if __name__ == "__main__":

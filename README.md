@@ -60,9 +60,38 @@ directories are kept. The next `up` creates a new disk and identity.
 
 ## Configuration and connections
 
-The only environment is `main`, configured in `environments/main/config.json`.
+Commands use `main` by default, configured in `environments/main/config.json`.
 Defaults are 4 CPUs, 8192 MiB RAM, an 80 GiB sparse disk, `127.0.0.1:2222`
 for SSH, and `127.0.0.1:8080` forwarded to guest port 8080.
+
+To add an environment, copy the configuration:
+
+```sh
+mkdir environments/dev
+cp environments/main/config.json environments/dev/config.json
+```
+
+Edit the copy before the first start. Set a hostname such as `devbox-dev` and
+choose unused host ports, for example SSH port 2223 and forwarded host port 8081.
+Environments running at the same time must use different host ports, including
+forwards. Guest ports can stay the same. Ports are never assigned automatically.
+
+Pass the environment name after any lifecycle command:
+
+```sh
+mise run up dev
+mise run ssh dev
+mise run status dev
+mise run down dev
+mise run destroy dev --yes
+```
+
+Each environment has its own disk, keys, identity, logs, and lifecycle lock.
+Names use 1-56 lowercase letters, digits, or hyphens, start and end with a letter
+or digit, and cannot be Windows device names such as `con` or `nul`.
+Only the `main` configuration is tracked by default; additional configurations
+stay local. `ssh`, `down`, `status`, and `destroy` work from saved VM data even
+if that environment's configuration was removed.
 
 CPU, RAM, SSH port, and `forwards` changes apply after `down` and the next `up`.
 The initial hostname, disk size, image, and host architecture cannot change for
@@ -80,11 +109,12 @@ application listening only on localhost, use OpenSSH forwarding instead:
 
 ```sh
 mise run ssh -- -L 8081:localhost:8080
+mise run ssh dev -- -L 8082:localhost:8080
 ```
 
 `up` prints the environment's `ssh-config` path. OpenSSH and editors can use that
-file directly with host alias `devbox-main`. Devbox does not edit your
-`~/.ssh/config` or share your home.
+file directly with host alias `devbox-<name>` (for example `devbox-dev`). Devbox
+does not edit your `~/.ssh/config` or share your home.
 The guest user is `dev`, with passwordless sudo and public-key login only.
 
 `mise run ssh` forwards your running host SSH agent so Git and SSH inside the
@@ -105,7 +135,7 @@ VMs and logs live outside the checkout:
 Set `DEVBOX_HOME` to an absolute, private directory to override this location.
 Spaces and Unicode are supported. Paths containing percent signs, double quotes,
 newlines, symlinks, or junctions are refused. Keep the same location across starts.
-The disk, SSH key, host-key records, and logs are under `machines/main/`.
+The disk, SSH key, host-key records, and logs are under `machines/<name>/`.
 Back up that directory only after a successful `down`.
 
 Existing VirtualBox VMs, disks, `.vagrant/`, and host SSH files are left in place.
