@@ -18,6 +18,10 @@ jobs:
           version: '2026.9.12'
       - run: mise tasks validate
       - run: mise run --dry-run setup
+      - name: Check lock with an inherited uv cutoff
+        run: mise exec -- uv lock --check
+        env:
+          UV_EXCLUDE_NEWER: '2026-11-09T17:56:45.87632Z'
       - run: mise run up --help
       - run: mise run ssh --help
       - run: mise run down --help
