@@ -1,4 +1,4 @@
-"""Start, connect to, and gracefully stop the persistent main QEMU VM."""
+"""Manage the persistent main QEMU VM."""
 
 import argparse
 import ctypes
@@ -25,7 +25,7 @@ import pycdlib
 ROOT = Path(__file__).resolve().parent
 ENVIRONMENT = "main"
 BOOT_TIMEOUT = 300
-HALT_TIMEOUT = 120
+DOWN_TIMEOUT = 120
 
 
 class DevboxError(Exception):
@@ -465,7 +465,7 @@ def initialize(directory, home, name, config, profile, tools, image):
             f"Unrecognized or incomplete environment at {directory}; preserved for inspection."
         )
     base = download_image(home, image, profile["system"])
-    # Only an unpublished staging directory is disposable. No launched disk is ever removed.
+    # Failed initialization may only clean up its unpublished staging directory.
     with tempfile.TemporaryDirectory(
         prefix=f".{name}-creating-", dir=directory.parent
     ) as staging:
@@ -869,7 +869,7 @@ def up(directory, home, name, config, profile):
         if process:
             if metadata["launch"]["config"] != config:
                 print(
-                    "Configuration changed. Using the running VM's saved connection settings; halt then up to apply CPU/RAM/port changes."
+                    "Configuration changed. Using the running VM's saved connection settings; down then up to apply CPU/RAM/port changes."
                 )
             ssh_config(directory, metadata["launch"]["config"], name)
             wait_ready(directory, metadata, executable("ssh"))
@@ -901,7 +901,7 @@ def show_connection(directory, name):
     )
 
 
-def halt(directory, name, metadata, timeout=HALT_TIMEOUT):
+def down(directory, name, metadata, timeout=DOWN_TIMEOUT):
     if not metadata or not find_process(metadata):
         print(f"{name} is already stopped.")
         return
@@ -915,7 +915,7 @@ def halt(directory, name, metadata, timeout=HALT_TIMEOUT):
         )
     except DevboxError as exc:
         raise DevboxError(
-            f"Shutdown SSH request failed: {exc}. QEMU was not killed; inspect the guest before retrying halt."
+            f"Shutdown SSH request failed: {exc}. QEMU was not killed; inspect the guest before retrying down."
         ) from exc
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -934,11 +934,53 @@ def halt(directory, name, metadata, timeout=HALT_TIMEOUT):
     )
 
 
+def status(directory, name, metadata):
+    if not metadata:
+        print(f"{name}: not created")
+        return
+    process = find_process(metadata)
+    if process:
+        config = metadata["launch"]["config"]
+        print(f"{name}: running (QEMU PID {process.pid})")
+        print(f"SSH: dev@127.0.0.1:{config['ssh_port']}")
+        for forward in config["forwards"]:
+            print(
+                f"TCP: 127.0.0.1:{forward['host_port']} -> guest:{forward['guest_port']}"
+            )
+    else:
+        print(f"{name}: stopped")
+    print(f"Data and logs: {directory}")
+
+
+def destroy(directory, name, metadata, *, yes=False):
+    if not metadata:
+        print(f"{name} is not created; nothing to destroy.")
+        return
+    if not yes:
+        raise DevboxError(
+            f"Destroy permanently deletes the disk, keys, and all other data in {directory}. "
+            "To confirm, run: mise run destroy --yes"
+        )
+    down(directory, name, metadata)
+    # Recheck storage and process identity after shutdown, before deleting any data.
+    metadata = load_machine(directory, name)
+    if metadata and find_process(metadata):
+        raise DevboxError("QEMU is still running; no data was deleted.")
+    shutil.rmtree(directory)
+    print(f"{name} destroyed. Removed {directory}.")
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for command in ("up", "ssh", "halt"):
+    for command in ("up", "ssh", "down", "status"):
         commands.add_parser(command)
+    destroy_parser = commands.add_parser(
+        "destroy", help="Shut down main and permanently delete its local data"
+    )
+    destroy_parser.add_argument(
+        "--yes", action="store_true", help="Confirm permanent deletion of main's data"
+    )
     if argv is None:
         argv = sys.argv[1:]
     ssh_options = []
@@ -976,8 +1018,14 @@ def main(argv=None):
                 up(directory, home, ENVIRONMENT, config, profile)
                 return 0
             metadata = load_machine(directory, ENVIRONMENT)
-            if args.command == "halt":
-                halt(directory, ENVIRONMENT, metadata)
+            if args.command == "down":
+                down(directory, ENVIRONMENT, metadata)
+                return 0
+            if args.command == "status":
+                status(directory, ENVIRONMENT, metadata)
+                return 0
+            if args.command == "destroy":
+                destroy(directory, ENVIRONMENT, metadata, yes=args.yes)
                 return 0
             if not metadata or not find_process(metadata):
                 raise DevboxError("main is stopped. Run: mise run up")
@@ -994,7 +1042,7 @@ def main(argv=None):
         return 1
     except KeyboardInterrupt:
         print(
-            "devbox: Interrupted. Any launched QEMU and existing disk were preserved; retry up or use halt.",
+            "devbox: Interrupted. Retry status to inspect the environment, up to start it, or down to stop it.",
             file=sys.stderr,
         )
         return 130

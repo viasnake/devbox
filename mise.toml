@@ -12,10 +12,20 @@ raw = true
 raw_args = true
 run = "uv run --locked devbox.py ssh"
 
-[tasks.halt]
+[tasks.down]
 description = "Shut down an environment and wait for QEMU to exit"
 raw_args = true
-run = "uv run --locked devbox.py halt"
+run = "uv run --locked devbox.py down"
+
+[tasks.status]
+description = "Show whether main is created, stopped, or running"
+raw_args = true
+run = "uv run --locked devbox.py status"
+
+[tasks.destroy]
+description = "Shut down main and permanently delete its local data (requires --yes)"
+raw_args = true
+run = "uv run --locked devbox.py destroy"
 
 [tasks.setup]
 description = "Install QEMU and prepare the locked Python environment"

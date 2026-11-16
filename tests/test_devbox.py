@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import unittest
 import uuid
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -115,7 +115,7 @@ class Files(unittest.TestCase):
 
 class Configuration(Files):
     def test_main_only_commands_and_ssh_options(self):
-        for command in ("up", "ssh", "halt"):
+        for command in ("up", "ssh", "down", "status", "destroy"):
             self.assertEqual(d.parse_args([command]).command, command)
             with (
                 self.subTest(command=command),
@@ -129,6 +129,10 @@ class Configuration(Files):
             d.parse_args(["ssh", "-L", "8081:localhost:8081"]).ssh_options,
             args.ssh_options,
         )
+        self.assertFalse(d.parse_args(["destroy"]).yes)
+        self.assertTrue(d.parse_args(["destroy", "--yes"]).yes)
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            d.parse_args(["halt"])
 
     def test_main_config_exposes_ssh_and_web_ports(self):
         config = d.validate_config(
@@ -625,7 +629,7 @@ class Processes(Files):
             {"pid": 123, "created": 42.0},
         )
 
-    def test_halt_confirms_process_exit_not_ssh_disconnect(self):
+    def test_down_confirms_process_exit_not_ssh_disconnect(self):
         self.prepared_launch()
         with (
             patch.object(d, "find_process", side_effect=[Mock(), Mock(), None]),
@@ -635,11 +639,11 @@ class Processes(Files):
             ) as run,
             patch.object(d.time, "sleep"),
         ):
-            d.halt(self.directory, "main", self.metadata)
+            d.down(self.directory, "main", self.metadata)
         self.assertIn("sudo -n poweroff", run.call_args.args[0])
         self.assertIsNone(d.read_json(self.directory / "machine.json")["process"])
 
-    def test_halt_timeout_never_kills_and_keeps_disk(self):
+    def test_down_timeout_never_kills_and_keeps_disk(self):
         self.prepared_launch()
         process = Mock()
         with (
@@ -648,15 +652,263 @@ class Processes(Files):
             patch.object(d, "run", return_value=result()),
             self.assertRaisesRegex(d.DevboxError, "not killed"),
         ):
-            d.halt(self.directory, "main", self.metadata, timeout=0)
+            d.down(self.directory, "main", self.metadata, timeout=0)
         process.terminate.assert_not_called()
         process.kill.assert_not_called()
         self.assertEqual((self.directory / "disk.qcow2").read_bytes(), b"disk.qcow2")
 
-    def test_stopped_halt_is_success_without_ssh(self):
+    def test_stopped_down_is_success_without_ssh(self):
         with patch.object(d, "run") as run:
-            d.halt(self.directory, "main", None)
+            d.down(self.directory, "main", None)
         run.assert_not_called()
+
+
+class Lifecycle(Files):
+    def invoke(self, args):
+        output, error = io.StringIO(), io.StringIO()
+        with (
+            patch.object(d, "host", return_value=WINDOWS if os.name == "nt" else MAC),
+            patch.object(d, "data_home", return_value=self.home),
+            patch.object(d, "ROOT", self.home / "missing-checkout"),
+            patch.object(d, "protect"),
+            redirect_stdout(output),
+            redirect_stderr(error),
+        ):
+            code = d.main(args)
+        return code, output.getvalue(), error.getvalue()
+
+    def saved_launch(self):
+        self.prepared_launch()
+        d.atomic_json(self.directory / "machine.json", self.metadata)
+
+    def contents(self):
+        return {
+            str(path.relative_to(self.directory)): path.read_bytes()
+            for path in self.directory.rglob("*")
+            if path.is_file()
+        }
+
+    def test_absent_status_down_and_destroy_succeed_without_tools(self):
+        with patch.object(d, "executable") as executable, patch.object(d, "run") as run:
+            for command, message in (
+                ("status", "main: not created"),
+                ("down", "already stopped"),
+                ("destroy", "nothing to destroy"),
+            ):
+                code, output, error = self.invoke([command])
+                self.assertEqual((code, error), (0, ""))
+                self.assertIn(message, output)
+        executable.assert_not_called()
+        run.assert_not_called()
+        self.assertFalse(self.directory.exists())
+
+    def test_status_reports_stopped_without_modifying_machine_or_using_ssh(self):
+        self.saved_launch()
+        before = self.contents()
+        with (
+            patch.object(d.psutil, "process_iter", return_value=[]),
+            patch.object(d, "executable") as executable,
+            patch.object(d, "ssh_config") as ssh_config,
+        ):
+            code, output, error = self.invoke(["status"])
+        self.assertEqual((code, error), (0, ""))
+        self.assertIn("main: stopped", output)
+        executable.assert_not_called()
+        ssh_config.assert_not_called()
+        self.assertEqual(self.contents(), before)
+
+    def test_running_status_uses_saved_ports_and_does_not_claim_readiness(self):
+        self.saved_launch()
+        before = self.contents()
+        with (
+            patch.object(d.psutil, "process_iter", return_value=[self.process()]),
+            patch.object(d, "run") as run,
+        ):
+            code, output, error = self.invoke(["status"])
+        self.assertEqual((code, error), (0, ""))
+        self.assertIn("main: running (QEMU PID 123)", output)
+        self.assertIn("SSH: dev@127.0.0.1:2222", output)
+        self.assertIn("127.0.0.1:8080 -> guest:8080", output)
+        self.assertNotIn("Ready", output)
+        run.assert_not_called()
+        self.assertEqual(self.contents(), before)
+
+    def test_destroy_requires_confirmation_before_shutdown_or_deletion(self):
+        self.saved_launch()
+        before = self.contents()
+        with patch.object(d, "down") as down, patch.object(d, "find_process") as find:
+            code, output, error = self.invoke(["destroy"])
+        self.assertEqual(code, 1)
+        self.assertIn("--yes", error)
+        self.assertIn(str(self.directory), error)
+        down.assert_not_called()
+        find.assert_not_called()
+        self.assertEqual(self.contents(), before)
+
+    def test_destroy_removes_only_main_and_can_be_repeated(self):
+        self.saved_launch()
+        retained = [
+            self.home / "images" / "cached.qcow2",
+            self.directory.parent / "other" / "disk.qcow2",
+            self.directory.parent / ".main-creating-interrupted" / "disk.qcow2",
+        ]
+        for path in retained:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"preserved")
+        with (
+            patch.object(d.psutil, "process_iter", return_value=[]),
+            patch.object(d, "executable") as executable,
+        ):
+            code, output, error = self.invoke(["destroy", "--yes"])
+            self.assertEqual((code, error), (0, ""))
+            self.assertIn("main destroyed", output)
+            self.assertFalse(self.directory.exists())
+            code, output, error = self.invoke(["destroy", "--yes"])
+            self.assertEqual((code, error), (0, ""))
+            self.assertIn("nothing to destroy", output)
+        executable.assert_not_called()
+        for path in retained:
+            self.assertEqual(path.read_bytes(), b"preserved")
+        self.assertTrue((self.directory.parent / ".main.lock").is_file())
+
+    def test_destroy_running_vm_waits_for_exit_before_removing_disk(self):
+        self.saved_launch()
+        process = self.process()
+
+        def shutdown(args, **kwargs):
+            self.assertTrue((self.directory / "disk.qcow2").is_file())
+            self.assertIn("sudo -n poweroff", args)
+            self.assertIn(
+                "Port 2222", (self.directory / "ssh-config").read_text(encoding="utf-8")
+            )
+            return result(255, err="connection closed")
+
+        with (
+            patch.object(d, "find_process", side_effect=[process, process, None, None]),
+            patch.object(d, "executable", return_value="ssh"),
+            patch.object(d, "run", side_effect=shutdown),
+            patch.object(d.time, "sleep"),
+        ):
+            code, output, error = self.invoke(["destroy", "--yes"])
+        self.assertEqual((code, error), (0, ""))
+        self.assertIn("QEMU process has exited", output)
+        self.assertFalse(self.directory.exists())
+        process.kill.assert_not_called()
+        process.terminate.assert_not_called()
+
+    def test_destroy_shutdown_failure_or_timeout_preserves_disk_and_identity(self):
+        self.saved_launch()
+        before = self.contents()
+        process = self.process()
+        down = d.down
+        for failure in (d.DevboxError("SSH unavailable"), result()):
+            with (
+                self.subTest(failure=failure),
+                patch.object(d, "find_process", return_value=process),
+                patch.object(d, "executable", return_value="ssh"),
+                patch.object(d, "run", side_effect=[failure]),
+                patch.object(
+                    d, "down", side_effect=lambda *args: down(*args, timeout=0)
+                ),
+            ):
+                code, output, error = self.invoke(["destroy", "--yes"])
+            self.assertEqual(code, 1)
+            self.assertIn("not killed", error)
+            for filename, content in before.items():
+                self.assertEqual((self.directory / filename).read_bytes(), content)
+        process.kill.assert_not_called()
+        process.terminate.assert_not_called()
+
+    def test_status_and_destroy_fail_closed_for_ambiguous_or_inaccessible_qemu(self):
+        self.saved_launch()
+        before = self.contents()
+        inaccessible = self.process()
+        inaccessible.create_time.side_effect = d.psutil.AccessDenied(123)
+        for candidates in ([self.process(), self.process(pid=456)], [inaccessible]):
+            for command in (["status"], ["destroy", "--yes"]):
+                with (
+                    self.subTest(candidates=candidates, command=command),
+                    patch.object(d.psutil, "process_iter", return_value=candidates),
+                    patch.object(d, "run") as run,
+                ):
+                    code, output, error = self.invoke(command)
+                self.assertEqual(code, 1)
+                self.assertTrue(error)
+                run.assert_not_called()
+                self.assertEqual(self.contents(), before)
+
+    def test_incomplete_storage_is_preserved_by_status_and_destroy(self):
+        self.machine()
+        (self.directory / "seed.iso").unlink()
+        before = self.contents()
+        for command in (["status"], ["destroy", "--yes"]):
+            with patch.object(d, "down") as down:
+                code, output, error = self.invoke(command)
+            self.assertEqual(code, 1)
+            self.assertIn("Missing seed.iso", error)
+            down.assert_not_called()
+            self.assertEqual(self.contents(), before)
+
+    def test_destroy_rechecks_process_identity_after_shutdown(self):
+        self.saved_launch()
+        before = self.contents()
+        with (
+            patch.object(d, "down"),
+            patch.object(d.psutil, "process_iter", return_value=[self.process()]),
+        ):
+            code, output, error = self.invoke(["destroy", "--yes"])
+        self.assertEqual(code, 1)
+        self.assertIn("still running", error)
+        self.assertEqual(self.contents(), before)
+
+    def test_destroy_revalidates_storage_after_shutdown(self):
+        self.machine()
+        link = self.directory / "junction"
+        before = self.contents()
+        with (
+            patch.object(d, "down", side_effect=lambda *args: link.mkdir()),
+            patch.object(Path, "is_junction", lambda path: path == link),
+        ):
+            code, output, error = self.invoke(["destroy", "--yes"])
+        self.assertEqual(code, 1)
+        self.assertIn("symlink/junction", error)
+        self.assertEqual(self.contents(), before)
+
+    def test_status_and_destroy_refuse_linked_storage_without_touching_target(self):
+        self.machine()
+        target = self.home / "unrelated"
+        target.mkdir()
+        marker = target / "keep"
+        marker.write_bytes(b"preserved")
+        link = self.directory / "linked-directory"
+        if os.name == "nt":
+            from _winapi import CreateJunction
+
+            CreateJunction(str(target), str(link))
+            self.addCleanup(link.rmdir)
+        else:
+            link.symlink_to(target, target_is_directory=True)
+            self.addCleanup(link.unlink)
+        for command in (["status"], ["destroy", "--yes"]):
+            code, output, error = self.invoke(command)
+            self.assertEqual(code, 1)
+            self.assertIn("symlink/junction", error)
+            self.assertEqual(marker.read_bytes(), b"preserved")
+            self.assertTrue((self.directory / "disk.qcow2").is_file())
+
+    def test_down_uses_saved_ports_without_checkout_configuration(self):
+        self.saved_launch()
+        with (
+            patch.object(d, "find_process", side_effect=[self.process(), None]),
+            patch.object(d, "executable", return_value="ssh"),
+            patch.object(d, "run", return_value=result()),
+        ):
+            code, output, error = self.invoke(["down"])
+        self.assertEqual((code, error), (0, ""))
+        self.assertIn("main stopped", output)
+        self.assertIn(
+            "Port 2222", (self.directory / "ssh-config").read_text(encoding="utf-8")
+        )
 
 
 class SSHReadiness(Files):
