@@ -1,4 +1,4 @@
-"""Manage the persistent main QEMU VM."""
+"""Manage persistent Ubuntu QEMU environments."""
 
 import argparse
 import ctypes
@@ -23,7 +23,7 @@ import psutil
 import pycdlib
 
 ROOT = Path(__file__).resolve().parent
-ENVIRONMENT = "main"
+DEFAULT_ENVIRONMENT = "main"
 BOOT_TIMEOUT = 300
 DOWN_TIMEOUT = 120
 
@@ -897,7 +897,7 @@ def up(directory, home, name, config, profile):
 
 def show_connection(directory, name):
     print(
-        f"Ready. mise run ssh\nSSH config: {directory / 'ssh-config'}\nData and logs: {directory}"
+        f"Ready. mise run ssh {name}\nSSH config: {directory / 'ssh-config'}\nData and logs: {directory}"
     )
 
 
@@ -959,7 +959,7 @@ def destroy(directory, name, metadata, *, yes=False):
     if not yes:
         raise DevboxError(
             f"Destroy permanently deletes the disk, keys, and all other data in {directory}. "
-            "To confirm, run: mise run destroy --yes"
+            f"To confirm, run: mise run destroy {name} --yes"
         )
     down(directory, name, metadata)
     # Recheck storage and process identity after shutdown, before deleting any data.
@@ -970,27 +970,61 @@ def destroy(directory, name, metadata, *, yes=False):
     print(f"{name} destroyed. Removed {directory}.")
 
 
+def environment_name(value):
+    if (
+        not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", value)
+        or len(value) > 56
+        or re.fullmatch(r"con|prn|aux|nul|com[1-9]|lpt[1-9]", value)
+    ):
+        raise argparse.ArgumentTypeError(
+            "Environment names must be 1-56 lowercase letters, digits, or hyphens, "
+            "start and end with a letter or digit, and not be a Windows device name."
+        )
+    return value
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for command in ("up", "ssh", "down", "status"):
-        commands.add_parser(command)
-    destroy_parser = commands.add_parser(
-        "destroy", help="Shut down main and permanently delete its local data"
-    )
-    destroy_parser.add_argument(
-        "--yes", action="store_true", help="Confirm permanent deletion of main's data"
-    )
+    for command in ("up", "ssh", "down", "status", "destroy"):
+        command_parser = commands.add_parser(command)
+        command_parser.add_argument(
+            "environment",
+            nargs="?",
+            default=DEFAULT_ENVIRONMENT,
+            type=environment_name,
+            help="Environment name (default: main)",
+        )
+        if command == "destroy":
+            command_parser.add_argument(
+                "--yes",
+                action="store_true",
+                help="Confirm permanent deletion of this environment's data",
+            )
+        elif command == "ssh":
+            command_parser.epilog = (
+                "Pass OpenSSH options after the environment name: "
+                "ssh dev -- -L 8081:localhost:8080"
+            )
     if argv is None:
         argv = sys.argv[1:]
     ssh_options = []
-    if argv[:1] == ["ssh"] and argv[1:2] not in (["-h"], ["--help"]):
+    if argv[:1] == ["ssh"]:
         ssh_options = argv[1:]
-        if ssh_options[:1] == ["--"]:
-            ssh_options = ssh_options[1:]
-        if ssh_options and not ssh_options[0].startswith("-"):
-            parser.error("Only the main environment is supported")
         argv = ["ssh"]
+        if ssh_options and not ssh_options[0].startswith("-"):
+            argv.append(ssh_options[0])
+            ssh_options = ssh_options[1:]
+        if ssh_options[:1] in (["-h"], ["--help"]):
+            argv += ssh_options
+            ssh_options = []
+        else:
+            if ssh_options[:1] == ["--"]:
+                ssh_options = ssh_options[1:]
+            if ssh_options and not ssh_options[0].startswith("-"):
+                parser.error(
+                    "OpenSSH options must start with '-' after the environment name"
+                )
     args = parser.parse_args(argv)
     args.ssh_options = ssh_options
     return args
@@ -1007,34 +1041,35 @@ def main(argv=None):
     configure_output()
     try:
         args = parse_args(argv)
+        name = args.environment
         profile = host()
         home = data_home(profile["system"])
         private_directory(home, profile["system"])
-        with machine_lock(home, ENVIRONMENT, profile["system"]) as directory:
+        with machine_lock(home, name, profile["system"]) as directory:
             if args.command == "up":
                 config = validate_config(
-                    read_json(ROOT / "environments" / ENVIRONMENT / "config.json")
+                    read_json(ROOT / "environments" / name / "config.json")
                 )
-                up(directory, home, ENVIRONMENT, config, profile)
+                up(directory, home, name, config, profile)
                 return 0
-            metadata = load_machine(directory, ENVIRONMENT)
+            metadata = load_machine(directory, name)
             if args.command == "down":
-                down(directory, ENVIRONMENT, metadata)
+                down(directory, name, metadata)
                 return 0
             if args.command == "status":
-                status(directory, ENVIRONMENT, metadata)
+                status(directory, name, metadata)
                 return 0
             if args.command == "destroy":
-                destroy(directory, ENVIRONMENT, metadata, yes=args.yes)
+                destroy(directory, name, metadata, yes=args.yes)
                 return 0
             if not metadata or not find_process(metadata):
-                raise DevboxError("main is stopped. Run: mise run up")
-            ssh_config(directory, metadata["launch"]["config"], ENVIRONMENT)
+                raise DevboxError(f"{name} is stopped. Run: mise run up {name}")
+            ssh_config(directory, metadata["launch"]["config"], name)
             # OpenSSH options belong before the generated host alias.
             command = (
-                ssh_args(executable("ssh"), directory, ENVIRONMENT)
+                ssh_args(executable("ssh"), directory, name)
                 + args.ssh_options
-                + [f"devbox-{ENVIRONMENT}"]
+                + [f"devbox-{name}"]
             )
         return subprocess.call(command)
     except (DevboxError, OSError, KeyError, TypeError) as exc:

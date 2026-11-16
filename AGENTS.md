@@ -1,7 +1,8 @@
 # Working on devbox
 
 Devbox provides `up`, `ssh`, `down`, `status`, and `destroy` from the repository
-root through matching `mise run` tasks. The only environment is `main`.
+root through matching `mise run` tasks. Commands accept an optional environment
+name, defaulting to `main`, with settings in `environments/<name>/config.json`.
 Tasks pass arguments through to `uv run --locked devbox.py`; keep lifecycle
 logic in Python and preserve interactive terminal access for SSH.
 Keep the implementation small, explicit, and shared across Windows x86-64/WHPX,
@@ -23,7 +24,7 @@ submit through a draft PR. Do not push directly to main or merge without a reque
 
 ## Boundaries
 
-The main environment owns one independent, persistent Ubuntu disk. Use JSON for
+Each environment owns one independent, persistent Ubuntu disk. Use JSON for
 settings, uv for the Python environment, pycdlib for NoCloud ISO creation, and
 OpenSSH for connections. Do not implement ISO, SSH, or QEMU protocols.
 
@@ -63,9 +64,11 @@ A failed guest boot retains the same disk and identity on retry. Diagnose guest
 cloud-init failures using SSH and `/var/log/cloud-init*.log`; do not erase data
 or reset cloud-init to hide a failure.
 
-Serialize lifecycle commands for main with an OS file lock, released when the CLI
-exits. Preserve launch intent before spawning QEMU. Identify a process using its
-executable, full argument list (including UUID/disk), and saved PID/start time.
+Serialize lifecycle commands per environment with an OS file lock, released when
+the CLI exits. Validate environment names before using them in paths; reject
+traversal, case aliases, and Windows device names. Preserve launch intent before
+spawning QEMU. Identify a process using its executable, full argument list
+(including UUID/disk), and saved PID/start time.
 Recover a process from the spawn/record gap only when its full identity matches.
 A stale or recycled PID must not authorize any signal. Ambiguous or inaccessible
 VM identity must fail closed. Do not create a persistent lock owner or supervisor.
@@ -96,7 +99,7 @@ virtualization/security features automatically.
 
 Status reports process state using the saved identity and launch connection
 settings without claiming guest readiness. Destroy requires explicit `--yes`,
-uses the same clean shutdown, and removes only the recognized `machines/main`
+uses the same clean shutdown, and removes only the selected `machines/<name>`
 directory after confirming QEMU exited and revalidating storage. Preserve data
 on shutdown failure, ambiguous process identity, or incomplete storage. Keep
 cached images, the adjacent lock, and interrupted staging directories.
@@ -124,6 +127,8 @@ size. In the guest, check `hostname`, `uname -m`, `cat /etc/os-release`,
 `cloud-init status --long`, `df -h /`, and external DNS/HTTPS access. Create a file,
 down, up again, and check its contents. Check repeated up, ports 2222 and 8080,
 a port conflict, and down on an already stopped environment.
+Run two named environments with different host ports and verify independent
+disks, identities, SSH connections, locks, status, shutdown, and destruction.
 Close the calling terminal after up and use a new terminal for ssh/down; only QEMU
 should remain. Check QEMU or SSH forwarding to a small guest web server and clear
 errors for missing QEMU/firmware. Intel Mac acceptance is separate.
