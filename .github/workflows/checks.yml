@@ -18,7 +18,7 @@ jobs:
           version: '2026.9.12'
       - run: mise tasks validate
       - run: mise run --dry-run setup
-      - name: Check lock with an inherited uv cutoff
+      - name: Check lock with the one-week dependency cooldown
         run: mise exec -- uv lock --check
         env:
           UV_EXCLUDE_NEWER: '1 week'
