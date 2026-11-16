@@ -269,7 +269,7 @@ def firmware(qemu, arch):
         binary,
     ]
     names = (
-        ("edk2-aarch64-code.fd", "edk2-aarch64-vars.fd")
+        ("edk2-aarch64-code.fd", "edk2-arm-vars.fd")
         if arch == "arm64"
         else ("bios-256k.bin",)
     )
