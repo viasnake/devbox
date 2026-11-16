@@ -1,9 +1,9 @@
 # Working on devbox
 
-Devbox provides `up [name]`, `ssh [name]`, and `halt [name]` from the repository
-root through `mise run up`, `mise run ssh`, and `mise run halt`. The default
-environment is `main`. Tasks pass arguments through to `uv run --locked devbox.py`;
-keep lifecycle logic in Python and preserve interactive terminal access for SSH.
+Devbox provides `up`, `ssh`, and `halt` from the repository root through
+`mise run up`, `mise run ssh`, and `mise run halt`. The only environment is `main`.
+Tasks pass arguments through to `uv run --locked devbox.py`; keep lifecycle
+logic in Python and preserve interactive terminal access for SSH.
 Keep the implementation small, explicit, and shared across Windows x86-64/WHPX,
 Apple Silicon/HVF, and Intel Mac/HVF. Detect the physical CPU, including Rosetta.
 Do not add Linux hosts, Windows ARM, TCG fallback, or another VM backend.
@@ -23,7 +23,7 @@ submit through a draft PR. Do not push directly to main or merge without a reque
 
 ## Boundaries
 
-One environment owns one independent, persistent Ubuntu disk. Use JSON for
+The main environment owns one independent, persistent Ubuntu disk. Use JSON for
 settings, uv for the Python environment, pycdlib for NoCloud ISO creation, and
 OpenSSH for connections. Do not implement ISO, SSH, or QEMU protocols.
 
@@ -62,7 +62,7 @@ A failed guest boot retains the same disk and identity on retry. Diagnose guest
 cloud-init failures using SSH and `/var/log/cloud-init*.log`; do not erase data
 or reset cloud-init to hide a failure.
 
-Serialize up/halt per environment with an OS file lock, released when the CLI
+Serialize up/halt for main with an OS file lock, released when the CLI
 exits. Preserve launch intent before spawning QEMU. Identify a process using its
 executable, full argument list (including UUID/disk), and saved PID/start time.
 Recover a process from the spawn/record gap only when its full identity matches.
@@ -84,8 +84,8 @@ reject changed keys without deleting the record or disabling verification.
 
 Use saved launch connection settings while a VM is running, including when its
 JSON has changed. Apply CPU/RAM/port changes on the next stopped start. Initial
-hostname, disk size, image, platform, and architecture changes require another
-environment. Do not resize/rebuild implicitly. SSH/halt must still work if the
+hostname, disk size, image, platform, and architecture cannot change for the
+existing disk. Do not resize/rebuild implicitly. SSH/halt must still work if the
 checkout configuration was edited or removed.
 
 Halt requests `sudo -n poweroff` over SSH and confirms the matching QEMU exited.
@@ -114,8 +114,8 @@ On Windows x86-64 and Apple Silicon, separately verify a fresh checkout's first
 up, SSH login, hostname/architecture/Ubuntu release, cloud-init success and rootfs
 size. In the guest, check `hostname`, `uname -m`, `cat /etc/os-release`,
 `cloud-init status --long`, `df -h /`, and external DNS/HTTPS access. Create a file,
-halt, up again, and check its contents. Check repeated up, a second environment
-with distinct ports, a port conflict, and halt on an already stopped environment.
+halt, up again, and check its contents. Check repeated up, ports 2222 and 8080,
+a port conflict, and halt on an already stopped environment.
 Close the calling terminal after up and use a new terminal for ssh/halt; only QEMU
 should remain. Check QEMU or SSH forwarding to a small guest web server and clear
 errors for missing QEMU/firmware. Intel Mac acceptance is separate.

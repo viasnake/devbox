@@ -1,4 +1,4 @@
-"""Start, connect to, and gracefully stop one persistent QEMU VM per environment."""
+"""Start, connect to, and gracefully stop the persistent main QEMU VM."""
 
 import argparse
 import ctypes
@@ -23,6 +23,7 @@ import psutil
 import pycdlib
 
 ROOT = Path(__file__).resolve().parent
+ENVIRONMENT = "main"
 BOOT_TIMEOUT = 300
 HALT_TIMEOUT = 120
 
@@ -74,23 +75,6 @@ def run(args, *, timeout=30, check=True, **kwargs):
             f"{Path(args[0]).name} failed: {result.stderr.strip() or result.stdout.strip()}"
         )
     return result
-
-
-def environment_name(name):
-    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?", name):
-        raise DevboxError(
-            "Environment name must contain 1-40 lowercase letters, digits, or hyphens; no leading/trailing hyphen."
-        )
-    if name in {
-        "con",
-        "prn",
-        "aux",
-        "nul",
-        *(f"com{i}" for i in range(1, 10)),
-        *(f"lpt{i}" for i in range(1, 10)),
-    }:
-        raise DevboxError("Environment name is reserved on Windows.")
-    return name
 
 
 def validate_config(config):
@@ -478,7 +462,7 @@ def create_seed(path, metadata, public_key):
 def initialize(directory, home, name, config, profile, tools, image):
     if directory.exists():
         raise DevboxError(
-            f"Unrecognized or incomplete environment at {directory}; preserved. Inspect it or use another environment name."
+            f"Unrecognized or incomplete environment at {directory}; preserved for inspection."
         )
     base = download_image(home, image, profile["system"])
     # Only an unpublished staging directory is disposable. No launched disk is ever removed.
@@ -591,7 +575,7 @@ def load_machine(directory, name):
     ] + (["uefi-vars.fd"] if metadata["arch"] == "arm64" else []):
         if not (directory / filename).is_file():
             raise DevboxError(
-                f"Missing {filename} in {directory}; existing disk will not be recreated. Inspect the environment or use a new name."
+                f"Missing {filename} in {directory}; existing disk will not be recreated. Inspect the incomplete state."
             )
     return metadata
 
@@ -599,7 +583,7 @@ def load_machine(directory, name):
 def check_changes(metadata, config, profile, image):
     if metadata["arch"] != profile["arch"] or metadata["profile"] != profile:
         raise DevboxError(
-            "This environment belongs to another host architecture/platform. Use a new environment name."
+            "This machine belongs to another host architecture/platform; its disk is preserved."
         )
     immutable = [
         key
@@ -608,7 +592,7 @@ def check_changes(metadata, config, profile, image):
     ]
     if immutable or metadata["image"] != image:
         raise DevboxError(
-            f"Initial hostname, disk capacity, or image changed ({', '.join(immutable) or 'image'}). Use a new environment; existing data is preserved."
+            f"Initial hostname, disk capacity, or image changed ({', '.join(immutable) or 'image'}). These settings cannot change for the existing disk; data is preserved."
         )
 
 
@@ -913,7 +897,7 @@ def up(directory, home, name, config, profile):
 
 def show_connection(directory, name):
     print(
-        f"Ready. mise run ssh {name}\nSSH config: {directory / 'ssh-config'}\nData and logs: {directory}"
+        f"Ready. mise run ssh\nSSH config: {directory / 'ssh-config'}\nData and logs: {directory}"
     )
 
 
@@ -952,18 +936,22 @@ def halt(directory, name, metadata, timeout=HALT_TIMEOUT):
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.set_defaults(ssh_options=[])
     commands = parser.add_subparsers(dest="command", required=True)
     for command in ("up", "ssh", "halt"):
-        subcommand = commands.add_parser(command)
-        subcommand.add_argument("name", nargs="?", default="main", type=environment_name)
-        if command == "ssh":
-            subcommand.add_argument(
-                "ssh_options",
-                nargs=argparse.REMAINDER,
-                help="OpenSSH options after the environment name (e.g. main -- -L 8080:localhost:8080)",
-            )
-    return parser.parse_args(argv)
+        commands.add_parser(command)
+    if argv is None:
+        argv = sys.argv[1:]
+    ssh_options = []
+    if argv[:1] == ["ssh"] and argv[1:2] not in (["-h"], ["--help"]):
+        ssh_options = argv[1:]
+        if ssh_options[:1] == ["--"]:
+            ssh_options = ssh_options[1:]
+        if ssh_options and not ssh_options[0].startswith("-"):
+            parser.error("Only the main environment is supported")
+        argv = ["ssh"]
+    args = parser.parse_args(argv)
+    args.ssh_options = ssh_options
+    return args
 
 
 def configure_output():
@@ -980,30 +968,25 @@ def main(argv=None):
         profile = host()
         home = data_home(profile["system"])
         private_directory(home, profile["system"])
-        with machine_lock(home, args.name, profile["system"]) as directory:
+        with machine_lock(home, ENVIRONMENT, profile["system"]) as directory:
             if args.command == "up":
                 config = validate_config(
-                    read_json(ROOT / "environments" / args.name / "config.json")
+                    read_json(ROOT / "environments" / ENVIRONMENT / "config.json")
                 )
-                up(directory, home, args.name, config, profile)
+                up(directory, home, ENVIRONMENT, config, profile)
                 return 0
-            metadata = load_machine(directory, args.name)
+            metadata = load_machine(directory, ENVIRONMENT)
             if args.command == "halt":
-                halt(directory, args.name, metadata)
+                halt(directory, ENVIRONMENT, metadata)
                 return 0
             if not metadata or not find_process(metadata):
-                raise DevboxError(
-                    f"{args.name} is stopped. Run: mise run up {args.name}"
-                )
-            ssh_config(directory, metadata["launch"]["config"], args.name)
-            options = args.ssh_options
-            if options[:1] == ["--"]:
-                options = options[1:]
+                raise DevboxError("main is stopped. Run: mise run up")
+            ssh_config(directory, metadata["launch"]["config"], ENVIRONMENT)
             # OpenSSH options belong before the generated host alias.
             command = (
-                ssh_args(executable("ssh"), directory, args.name)
-                + options
-                + [f"devbox-{args.name}"]
+                ssh_args(executable("ssh"), directory, ENVIRONMENT)
+                + args.ssh_options
+                + [f"devbox-{ENVIRONMENT}"]
             )
         return subprocess.call(command)
     except (DevboxError, OSError, KeyError, TypeError) as exc:

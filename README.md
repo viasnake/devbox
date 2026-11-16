@@ -41,19 +41,17 @@ the background; `halt` requests a clean shutdown and waits for QEMU to exit.
 A failed start preserves the disk. Run `up` again to recheck it, or `ssh` to
 inspect a guest that is still running. There is no automatic force stop or reset.
 
-## Environments and connections
+## Configuration and connections
 
-The omitted environment name is `main`. To add another, copy
-`environments/main/config.json` to `environments/sandbox/config.json`, change its
-`hostname` and host ports, then use the same commands with `sandbox` at the end.
-Personal environments stay untracked. Defaults are 4 CPUs, 8192 MiB RAM, an
-80 GiB sparse disk, and `127.0.0.1:2222` for SSH.
+The only environment is `main`, configured in `environments/main/config.json`.
+Defaults are 4 CPUs, 8192 MiB RAM, an 80 GiB sparse disk, `127.0.0.1:2222`
+for SSH, and `127.0.0.1:8080` forwarded to guest port 8080.
 
 CPU, RAM, SSH port, and `forwards` changes apply after `halt` and the next `up`.
-Changing the initial hostname, disk size, image, or host architecture requires a
-new environment. Running VMs keep their saved connection settings.
+The initial hostname, disk size, image, and host architecture cannot change for
+an existing disk. Running VMs keep their saved connection settings.
 
-Add optional TCP forwards to the environment's JSON:
+Add or change TCP forwards in the JSON:
 
 ```json
 "forwards": [{ "host_port": 8080, "guest_port": 8080 }]
@@ -64,12 +62,12 @@ must listen on its guest network address (for example `0.0.0.0:8080`). For a gue
 application listening only on localhost, use OpenSSH forwarding instead:
 
 ```sh
-mise run ssh main -- -L 8080:localhost:8080
+mise run ssh -- -L 8081:localhost:8080
 ```
 
 `up` prints the environment's `ssh-config` path. OpenSSH and editors can use that
-file directly with host alias `devbox-main` (or `devbox-<name>`). Devbox does not
-edit your `~/.ssh/config`, share your home, or forward your SSH agent.
+file directly with host alias `devbox-main`. Devbox does not edit your
+`~/.ssh/config`, share your home, or forward your SSH agent.
 The guest user is `dev`, with passwordless sudo and public-key login only.
 
 ## Local data
@@ -82,10 +80,10 @@ VMs and logs live outside the checkout:
 Set `DEVBOX_HOME` to an absolute, private directory to override this location.
 Spaces and Unicode are supported. Paths containing percent signs, double quotes,
 newlines, symlinks, or junctions are refused. Keep the same location across starts.
-Each environment has its own disk, SSH key, host-key records, and logs under
-`machines/<name>/`. Back up that directory only after a successful `halt`.
+The disk, SSH key, host-key records, and logs are under `machines/main/`.
+Back up that directory only after a successful `halt`.
 
 Existing VirtualBox VMs, disks, `.vagrant/`, and host SSH files are left in place.
 Their migration, shutdown, and removal are separate tasks. If an old VM owns
-port 2222, choose another port for the QEMU environment. NAT provides convenient
+port 2222 or 8080, stop it before starting devbox. NAT provides convenient
 network access, not complete isolation from the host or other networks.

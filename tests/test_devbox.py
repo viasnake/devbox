@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import unittest
 import uuid
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -18,7 +19,7 @@ CONFIG = {
     "memory_mib": 8192,
     "disk_gib": 80,
     "ssh_port": 2222,
-    "forwards": [],
+    "forwards": [{"host_port": 8080, "guest_port": 8080}],
 }
 MAC = {
     "system": "Darwin",
@@ -113,28 +114,30 @@ class Files(unittest.TestCase):
 
 
 class Configuration(Files):
-    def test_default_and_alternate_commands(self):
+    def test_main_only_commands_and_ssh_options(self):
         for command in ("up", "ssh", "halt"):
-            self.assertEqual(d.parse_args([command]).name, "main")
-            self.assertEqual(d.parse_args([command, "sandbox"]).name, "sandbox")
-        args = d.parse_args(["ssh", "sandbox", "--", "-L", "8080:localhost:8080"])
-        self.assertEqual(args.ssh_options[-2:], ["-L", "8080:localhost:8080"])
+            self.assertEqual(d.parse_args([command]).command, command)
+            with (
+                self.subTest(command=command),
+                redirect_stderr(io.StringIO()),
+                self.assertRaises(SystemExit),
+            ):
+                d.parse_args([command, "sandbox"])
+        args = d.parse_args(["ssh", "--", "-L", "8081:localhost:8081"])
+        self.assertEqual(args.ssh_options, ["-L", "8081:localhost:8081"])
+        self.assertEqual(
+            d.parse_args(["ssh", "-L", "8081:localhost:8081"]).ssh_options,
+            args.ssh_options,
+        )
 
-    def test_environment_traversal_and_windows_names(self):
-        for name in (
-            "../main",
-            "a/b",
-            "a\\b",
-            "con",
-            "lpt1",
-            "Main",
-            "-main",
-            "main-",
-            "",
-            "a" * 41,
-        ):
-            with self.subTest(name=name), self.assertRaises(d.DevboxError):
-                d.environment_name(name)
+    def test_main_config_exposes_ssh_and_web_ports(self):
+        config = d.validate_config(
+            d.read_json(d.ROOT / "environments" / "main" / "config.json")
+        )
+        self.assertEqual(config, CONFIG)
+        network = d.qemu_args(self.directory, self.metadata, config, self.tools)[-3]
+        self.assertIn("hostfwd=tcp:127.0.0.1:2222-:22", network)
+        self.assertIn("hostfwd=tcp:127.0.0.1:8080-:8080", network)
 
     def test_invalid_values_and_unknown_settings(self):
         for key, values in {
@@ -160,9 +163,11 @@ class Configuration(Files):
         with self.assertRaises(d.DevboxError):
             d.validate_config(dict(CONFIG, backend="tcg"))
 
-    def test_immutable_changes_require_new_environment(self):
+    def test_immutable_changes_preserve_existing_disk(self):
         for key, value in (("hostname", "devbox-other"), ("disk_gib", 100)):
-            with self.assertRaisesRegex(d.DevboxError, "new environment"):
+            with self.assertRaisesRegex(
+                d.DevboxError, "cannot change for the existing disk"
+            ):
                 d.check_changes(
                     self.metadata, dict(CONFIG, **{key: value}), MAC, self.image
                 )
@@ -219,6 +224,14 @@ class Configuration(Files):
             self.assertRaisesRegex(d.DevboxError, "127.0.0.1:2222"),
         ):
             d.ports_available(CONFIG)
+        socket.bind.reset_mock()
+        socket.bind.side_effect = [None, OSError("in use")]
+        with (
+            patch.object(d.socket, "socket", return_value=socket),
+            self.assertRaisesRegex(d.DevboxError, "127.0.0.1:8080"),
+        ):
+            d.ports_available(CONFIG)
+        self.assertEqual(socket.bind.call_count, 2)
 
 
 class Hosts(Files):
