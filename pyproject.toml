@@ -6,3 +6,4 @@ dependencies = ["psutil==7.2.2", "pycdlib==1.16.0"]
 
 [tool.uv]
 package = false
+exclude-newer = "1 week"
