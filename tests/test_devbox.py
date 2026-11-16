@@ -1208,19 +1208,19 @@ class SSHReadiness(Files):
             d.wait_ready(self.directory, self.metadata, "ssh", timeout=1)
         self.assertEqual((self.directory / "disk.qcow2").read_bytes(), b"disk.qcow2")
 
-    def test_config_uses_only_private_key_hosts_and_quoted_paths(self):
+    def test_config_uses_dedicated_key_and_agent_forwarding(self):
         self.machine()
         d.ssh_config(self.directory, CONFIG, "main")
         text = (self.directory / "ssh-config").read_text(encoding="utf-8")
         for setting in (
-            "IdentityAgent none",
-            "ForwardAgent no",
+            "ForwardAgent yes",
             "StrictHostKeyChecking accept-new",
             "GlobalKnownHostsFile none",
             "IdentitiesOnly yes",
         ):
             self.assertIn(setting, text)
         self.assertIn(f'IdentityFile "{(self.directory / "ssh_key").as_posix()}"', text)
+        self.assertNotIn("IdentityAgent none", text)
         self.assertNotIn("StrictHostKeyChecking no", text)
         self.assertFalse((self.home / ".ssh").exists())
 
@@ -1240,14 +1240,31 @@ class SSHReadiness(Files):
             self.skipTest("OpenSSH client is unavailable")
         self.machine()
         for name, config in (("main", CONFIG), ("dev", dict(CONFIG, ssh_port=2223))):
-            with self.subTest(name=name):
-                d.ssh_config(self.directory, config, name)
-                output = d.run(
-                    [ssh, "-G", "-F", self.directory / "ssh-config", f"devbox-{name}"]
-                )
-                self.assertIn(f"port {config['ssh_port']}", output.stdout)
-                self.assertIn("user dev", output.stdout)
-                self.assertIn("日本語", output.stdout)
+            d.ssh_config(self.directory, config, name)
+            for batch, options, forwarding in (
+                (False, [], "yes"),
+                (False, ["-a"], "no"),
+                (True, [], "no"),
+            ):
+                with self.subTest(name=name, batch=batch, options=options):
+                    output = d.run(
+                        d.ssh_args(ssh, self.directory, name, batch=batch)
+                        + ["-G", *options, f"devbox-{name}"]
+                    ).stdout
+                    self.assertIn(f"port {config['ssh_port']}", output)
+                    self.assertIn("user dev", output)
+                    self.assertIn("日本語", output)
+                    self.assertIn(f"forwardagent {forwarding}\n", output)
+                    self.assertIn("identitiesonly yes\n", output)
+                    self.assertIn(
+                        f"identityfile {(self.directory / 'ssh_key').as_posix()}\n",
+                        output,
+                    )
+                    if batch:
+                        self.assertIn("identityagent none\n", output)
+                        self.assertIn("batchmode yes\n", output)
+                    else:
+                        self.assertNotIn("identityagent none\n", output)
 
 
 if __name__ == "__main__":

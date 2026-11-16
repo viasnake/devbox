@@ -29,11 +29,15 @@ settings, uv for the Python environment, pycdlib for NoCloud ISO creation, and
 OpenSSH for connections. Do not implement ISO, SSH, or QEMU protocols.
 
 Do not add Agent integration, provisioning hooks, language runtimes, Docker,
-application templates, shared folders, SSH agent forwarding, a host service,
-a supervisor, automatic startup/recovery, a GUI, snapshots, generic backend
+application templates, shared folders, a host service, a supervisor, automatic
+startup/recovery, a GUI, snapshots, generic backend
 interfaces, or additional destructive lifecycle commands. Cloud-init is limited
 to the initial hostname, the dev user/key, SSH policy, and root filesystem
 expansion.
+
+Forward the host SSH agent for interactive SSH connections through OpenSSH.
+Keep readiness and shutdown connections independent of the agent with forwarding
+disabled. Leave starting agents and loading keys to the user.
 
 Never modify existing VirtualBox registrations/disks, `.vagrant/`, untracked
 checkout files, or the user's SSH keys/config. Remove only tracked Vagrant files

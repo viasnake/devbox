@@ -114,8 +114,16 @@ mise run ssh dev -- -L 8082:localhost:8080
 
 `up` prints the environment's `ssh-config` path. OpenSSH and editors can use that
 file directly with host alias `devbox-<name>` (for example `devbox-dev`). Devbox
-does not edit your `~/.ssh/config`, share your home, or forward your SSH agent.
+does not edit your `~/.ssh/config` or share your home.
 The guest user is `dev`, with passwordless sudo and public-key login only.
+
+`mise run ssh` forwards your running host SSH agent so Git and SSH inside the
+guest can use keys already loaded on the host. List those keys on the host with
+`ssh-add -l`. VM login uses its dedicated key. To connect without agent forwarding:
+
+```sh
+mise run ssh -- -a
+```
 
 ## Local data
 
