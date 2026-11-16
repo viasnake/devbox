@@ -285,15 +285,22 @@ class Hosts(Files):
             self.assertEqual("uefi-vars.fd" in " ".join(args), profile == MAC)
 
     def test_firmware_comes_from_selected_qemu(self):
-        binary = self.home / "bin" / "qemu-system-aarch64"
-        binary.parent.mkdir()
-        data = self.home / "share" / "qemu"
+        prefix = self.home / "Cellar" / "qemu" / "10.1.2"
+        binary = prefix / "bin" / "qemu-system-aarch64"
+        binary.parent.mkdir(parents=True)
+        data = prefix / "share" / "qemu"
         data.mkdir(parents=True)
         with self.assertRaisesRegex(d.DevboxError, "firmware"):
             d.firmware(str(binary), "arm64")
-        for filename in ("edk2-aarch64-code.fd", "edk2-aarch64-vars.fd"):
-            (data / filename).write_bytes(b"firmware")
-        self.assertEqual(len(d.firmware(str(binary), "arm64")), 2)
+        code = data / "edk2-aarch64-code.fd"
+        code.write_bytes(b"firmware")
+        with self.assertRaisesRegex(d.DevboxError, "edk2-arm-vars.fd"):
+            d.firmware(str(binary), "arm64")
+        variables = data / "edk2-arm-vars.fd"
+        variables.write_bytes(b"variables")
+        self.assertEqual(
+            d.firmware(str(binary), "arm64"), [str(code), str(variables)]
+        )
         with self.assertRaises(d.DevboxError):
             d.firmware(str(binary), "amd64")
 
