@@ -18,12 +18,12 @@ raw_args = true
 run = "uv run --locked devbox.py down"
 
 [tasks.status]
-description = "Show whether main is created, stopped, or running"
+description = "Show whether an environment is created, stopped, or running"
 raw_args = true
 run = "uv run --locked devbox.py status"
 
 [tasks.destroy]
-description = "Shut down main and permanently delete its local data (requires --yes)"
+description = "Shut down an environment and permanently delete its local data (requires --yes)"
 raw_args = true
 run = "uv run --locked devbox.py destroy"
 
