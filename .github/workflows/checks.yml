@@ -21,7 +21,7 @@ jobs:
       - name: Check lock with an inherited uv cutoff
         run: mise exec -- uv lock --check
         env:
-          UV_EXCLUDE_NEWER: '2026-11-09T17:56:45.87632Z'
+          UV_EXCLUDE_NEWER: '1 week'
       - run: mise run up --help
       - run: mise run ssh --help
       - run: mise run down --help
