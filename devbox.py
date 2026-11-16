@@ -726,11 +726,10 @@ def ssh_config(directory, config, name):
     User dev
     IdentityFile {quoted(directory / "ssh_key")}
     IdentitiesOnly yes
-    IdentityAgent none
     UserKnownHostsFile {quoted(directory / "known_hosts")}
     GlobalKnownHostsFile none
     StrictHostKeyChecking accept-new
-    ForwardAgent no
+    ForwardAgent yes
     PasswordAuthentication no
     KbdInteractiveAuthentication no
     ConnectTimeout 5
@@ -745,7 +744,7 @@ def ssh_config(directory, config, name):
 def ssh_args(ssh, directory, name, *, batch=False):
     args = [ssh, "-F", str(directory / "ssh-config")]
     if batch:
-        args += ["-o", "BatchMode=yes", "-T"]
+        args += ["-o", "BatchMode=yes", "-o", "IdentityAgent=none", "-a", "-T"]
     return args
 
 
